@@ -107,15 +107,16 @@ namespace GitHub.Runner.Worker
                     return await CompleteJobAsync(jobServer, jobContext, message, TaskResult.Failed);
                 }
 
+                if (jobContext.WriteDebug)
+                {
+                    jobContext.SetRunnerContext("debug", "1");
+                }
+
                 jobContext.SetRunnerContext("os", VarUtil.OS);
 
                 string toolsDirectory = HostContext.GetDirectory(WellKnownDirectory.Tools);
                 Directory.CreateDirectory(toolsDirectory);
                 jobContext.SetRunnerContext("tool_cache", toolsDirectory);
-
-                // remove variable from env
-                Environment.SetEnvironmentVariable("AGENT_TOOLSDIRECTORY", null);
-                Environment.SetEnvironmentVariable(Constants.Variables.Agent.ToolsDirectory, null);
 
                 // Setup TEMP directories
                 _tempDirectoryManager = HostContext.GetService<ITempDirectoryManager>();
@@ -183,7 +184,7 @@ namespace GitHub.Runner.Worker
                 finally
                 {
                     Trace.Info("Finalize job.");
-                    await jobExtension.FinalizeJob(jobContext, message, jobStartTimeUtc);
+                    jobExtension.FinalizeJob(jobContext, message, jobStartTimeUtc);
                 }
 
                 Trace.Info($"Job result after all job steps finish: {jobContext.Result ?? TaskResult.Succeeded}");

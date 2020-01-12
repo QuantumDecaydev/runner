@@ -40,9 +40,7 @@ namespace GitHub.Runner.Worker
                 // Validate args.
                 ArgUtil.NotNullOrEmpty(pipeIn, nameof(pipeIn));
                 ArgUtil.NotNullOrEmpty(pipeOut, nameof(pipeOut));
-                var runnerWebProxy = HostContext.GetService<IRunnerWebProxy>();
-                var runnerCertManager = HostContext.GetService<IRunnerCertificateManager>();
-                VssUtil.InitializeVssClientSettings(HostContext.UserAgent, runnerWebProxy.WebProxy, runnerCertManager.VssClientCertificateManager);
+                VssUtil.InitializeVssClientSettings(HostContext.UserAgent, HostContext.WebProxy);
                 var jobRunner = HostContext.CreateService<IJobRunner>();
 
                 using (var channel = HostContext.CreateService<IProcessChannel>())
@@ -74,7 +72,7 @@ namespace GitHub.Runner.Worker
                     SetCulture(jobMessage);
 
                     // Start the job.
-                    Trace.Info($"Job message:{Environment.NewLine} {StringUtil.ConvertToJson(WorkerUtilities.ScrubPiiData(jobMessage))}");
+                    Trace.Info($"Job message:{Environment.NewLine} {StringUtil.ConvertToJson(jobMessage)}");
                     Task<TaskResult> jobRunnerTask = jobRunner.RunAsync(jobMessage, jobRequestCancellationToken.Token);
 
                     // Start listening for a cancel message from the channel.
@@ -177,15 +175,6 @@ namespace GitHub.Runner.Worker
                     {
                         HostContext.SecretMasker.AddValue(value);
                     }
-                }
-            }
-
-            // Add masks for secure file download tickets
-            foreach (SecureFile file in message.Resources.SecureFiles ?? new List<SecureFile>())
-            {
-                if (!string.IsNullOrEmpty(file.Ticket))
-                {
-                    HostContext.SecretMasker.AddValue(file.Ticket);
                 }
             }
         }

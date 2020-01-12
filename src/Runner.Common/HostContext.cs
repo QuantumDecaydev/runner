@@ -20,12 +20,12 @@ namespace GitHub.Runner.Common
 {
     public interface IHostContext : IDisposable
     {
-        RunMode RunMode { get; set; }
         StartupType StartupType { get; set; }
         CancellationToken RunnerShutdownToken { get; }
         ShutdownReason RunnerShutdownReason { get; }
         ISecretMasker SecretMasker { get; }
         ProductInfoHeaderValue UserAgent { get; }
+        RunnerWebProxy WebProxy { get; }
         string GetDirectory(WellKnownDirectory directory);
         string GetConfigFile(WellKnownConfigFile configFile);
         Tracing GetTrace(string name);
@@ -57,22 +57,23 @@ namespace GitHub.Runner.Common
         private readonly ProductInfoHeaderValue _userAgent = new ProductInfoHeaderValue($"GitHubActionsRunner-{BuildConstants.RunnerPackage.PackageName}", BuildConstants.RunnerPackage.Version);
         private CancellationTokenSource _runnerShutdownTokenSource = new CancellationTokenSource();
         private object _perfLock = new object();
-        private RunMode _runMode = RunMode.Normal;
         private Tracing _trace;
-        private Tracing _vssTrace;
-        private Tracing _httpTrace;
+        private Tracing _actionsHttpTrace;
+        private Tracing _netcoreHttpTrace;
         private ITraceManager _traceManager;
         private AssemblyLoadContext _loadContext;
         private IDisposable _httpTraceSubscription;
         private IDisposable _diagListenerSubscription;
         private StartupType _startupType;
         private string _perfFile;
+        private RunnerWebProxy _webProxy = new RunnerWebProxy();
 
         public event EventHandler Unloading;
         public CancellationToken RunnerShutdownToken => _runnerShutdownTokenSource.Token;
         public ShutdownReason RunnerShutdownReason { get; private set; }
         public ISecretMasker SecretMasker => _secretMasker;
         public ProductInfoHeaderValue UserAgent => _userAgent;
+        public RunnerWebProxy WebProxy => _webProxy;
         public HostContext(string hostType, string logFile = null)
         {
             // Validate args.
@@ -116,8 +117,7 @@ namespace GitHub.Runner.Common
             }
 
             _trace = GetTrace(nameof(HostContext));
-            _vssTrace = GetTrace("GitHubActionsRunner");  // VisualStudioService
-
+            _actionsHttpTrace = GetTrace("GitHubActionsService");
             // Enable Http trace
             bool enableHttpTrace;
             if (bool.TryParse(Environment.GetEnvironmentVariable("GITHUB_ACTIONS_RUNNER_HTTPTRACE"), out enableHttpTrace) && enableHttpTrace)
@@ -129,7 +129,7 @@ namespace GitHub.Runner.Common
                 _trace.Warning("**                                                                                     **");
                 _trace.Warning("*****************************************************************************************");
 
-                _httpTrace = GetTrace("HttpTrace");
+                _netcoreHttpTrace = GetTrace("HttpTrace");
                 _diagListenerSubscription = DiagnosticListener.AllListeners.Subscribe(this);
             }
 
@@ -147,19 +147,47 @@ namespace GitHub.Runner.Common
                     _trace.Error(ex);
                 }
             }
-        }
 
-        public RunMode RunMode
-        {
-            get
+            // Check and trace proxy info
+            if (!string.IsNullOrEmpty(WebProxy.HttpProxyAddress))
             {
-                return _runMode;
+                if (string.IsNullOrEmpty(WebProxy.HttpProxyUsername) && string.IsNullOrEmpty(WebProxy.HttpProxyPassword))
+                {
+                    _trace.Info($"Configuring anonymous proxy {WebProxy.HttpProxyAddress} for all HTTP requests.");
+                }
+                else
+                {
+                    // Register proxy password as secret
+                    if (!string.IsNullOrEmpty(WebProxy.HttpProxyPassword))
+                    {
+                        this.SecretMasker.AddValue(WebProxy.HttpProxyPassword);
+                    }
+
+                    _trace.Info($"Configuring authenticated proxy {WebProxy.HttpProxyAddress} for all HTTP requests.");
+                }
             }
 
-            set
+            if (!string.IsNullOrEmpty(WebProxy.HttpsProxyAddress))
             {
-                _trace.Info($"Set run mode: {value}");
-                _runMode = value;
+                if (string.IsNullOrEmpty(WebProxy.HttpsProxyUsername) && string.IsNullOrEmpty(WebProxy.HttpsProxyPassword))
+                {
+                    _trace.Info($"Configuring anonymous proxy {WebProxy.HttpsProxyAddress} for all HTTPS requests.");
+                }
+                else
+                {
+                    // Register proxy password as secret
+                    if (!string.IsNullOrEmpty(WebProxy.HttpsProxyPassword))
+                    {
+                        this.SecretMasker.AddValue(WebProxy.HttpsProxyPassword);
+                    }
+
+                    _trace.Info($"Configuring authenticated proxy {WebProxy.HttpsProxyAddress} for all HTTPS requests.");
+                }
+            }
+
+            if (string.IsNullOrEmpty(WebProxy.HttpProxyAddress) && string.IsNullOrEmpty(WebProxy.HttpsProxyAddress))
+            {
+                _trace.Info($"No proxy settings were found based on environmental variables (http_proxy/https_proxy/HTTP_PROXY/HTTPS_PROXY)");
             }
         }
 
@@ -203,6 +231,7 @@ namespace GitHub.Runner.Common
                 case WellKnownDirectory.Tools:
                     // TODO: Coallesce to just check RUNNER_TOOL_CACHE when images stabilize
                     path = Environment.GetEnvironmentVariable("RUNNER_TOOL_CACHE") ?? Environment.GetEnvironmentVariable("RUNNER_TOOLSDIRECTORY") ?? Environment.GetEnvironmentVariable("AGENT_TOOLSDIRECTORY") ?? Environment.GetEnvironmentVariable(Constants.Variables.Agent.ToolsDirectory);
+
                     if (string.IsNullOrEmpty(path))
                     {
                         path = Path.Combine(
@@ -280,24 +309,6 @@ namespace GitHub.Runner.Common
                     path = Path.Combine(
                         GetDirectory(WellKnownDirectory.Root),
                         ".certificates");
-                    break;
-
-                case WellKnownConfigFile.Proxy:
-                    path = Path.Combine(
-                        GetDirectory(WellKnownDirectory.Root),
-                        ".proxy");
-                    break;
-
-                case WellKnownConfigFile.ProxyCredentials:
-                    path = Path.Combine(
-                        GetDirectory(WellKnownDirectory.Root),
-                        ".proxycredentials");
-                    break;
-
-                case WellKnownConfigFile.ProxyBypass:
-                    path = Path.Combine(
-                        GetDirectory(WellKnownDirectory.Root),
-                        ".proxybypass");
                     break;
 
                 case WellKnownConfigFile.Options:
@@ -467,12 +478,12 @@ namespace GitHub.Runner.Common
 
         void IObserver<DiagnosticListener>.OnCompleted()
         {
-            _httpTrace.Info("DiagListeners finished transmitting data.");
+            _netcoreHttpTrace.Info("DiagListeners finished transmitting data.");
         }
 
         void IObserver<DiagnosticListener>.OnError(Exception error)
         {
-            _httpTrace.Error(error);
+            _netcoreHttpTrace.Error(error);
         }
 
         void IObserver<DiagnosticListener>.OnNext(DiagnosticListener listener)
@@ -485,22 +496,22 @@ namespace GitHub.Runner.Common
 
         void IObserver<KeyValuePair<string, object>>.OnCompleted()
         {
-            _httpTrace.Info("HttpHandlerDiagnosticListener finished transmitting data.");
+            _netcoreHttpTrace.Info("HttpHandlerDiagnosticListener finished transmitting data.");
         }
 
         void IObserver<KeyValuePair<string, object>>.OnError(Exception error)
         {
-            _httpTrace.Error(error);
+            _netcoreHttpTrace.Error(error);
         }
 
         void IObserver<KeyValuePair<string, object>>.OnNext(KeyValuePair<string, object> value)
         {
-            _httpTrace.Info($"Trace {value.Key} event:{Environment.NewLine}{value.Value.ToString()}");
+            _netcoreHttpTrace.Info($"Trace {value.Key} event:{Environment.NewLine}{value.Value.ToString()}");
         }
 
         protected override void OnEventSourceCreated(EventSource source)
         {
-            if (source.Name.Equals("Microsoft-VSS-Http"))
+            if (source.Name.Equals("GitHub-Actions-Http"))
             {
                 EnableEvents(source, EventLevel.Verbose);
             }
@@ -540,24 +551,24 @@ namespace GitHub.Runner.Common
                 {
                     case EventLevel.Critical:
                     case EventLevel.Error:
-                        _vssTrace.Error(message);
+                        _actionsHttpTrace.Error(message);
                         break;
                     case EventLevel.Warning:
-                        _vssTrace.Warning(message);
+                        _actionsHttpTrace.Warning(message);
                         break;
                     case EventLevel.Informational:
-                        _vssTrace.Info(message);
+                        _actionsHttpTrace.Info(message);
                         break;
                     default:
-                        _vssTrace.Verbose(message);
+                        _actionsHttpTrace.Verbose(message);
                         break;
                 }
             }
             catch (Exception ex)
             {
-                _vssTrace.Error(ex);
-                _vssTrace.Info(eventData.Message);
-                _vssTrace.Info(string.Join(", ", eventData.Payload?.ToArray() ?? new string[0]));
+                _actionsHttpTrace.Error(ex);
+                _actionsHttpTrace.Info(eventData.Message);
+                _actionsHttpTrace.Info(string.Join(", ", eventData.Payload?.ToArray() ?? new string[0]));
             }
         }
 
@@ -580,8 +591,7 @@ namespace GitHub.Runner.Common
         public static HttpClientHandler CreateHttpClientHandler(this IHostContext context)
         {
             HttpClientHandler clientHandler = new HttpClientHandler();
-            var runnerWebProxy = context.GetService<IRunnerWebProxy>();
-            clientHandler.Proxy = runnerWebProxy.WebProxy;
+            clientHandler.Proxy = context.WebProxy;
             return clientHandler;
         }
     }

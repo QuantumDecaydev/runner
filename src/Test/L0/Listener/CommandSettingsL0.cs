@@ -1,11 +1,9 @@
 using GitHub.Runner.Listener;
 using GitHub.Runner.Listener.Configuration;
-using GitHub.Runner.Common.Util;
 using Moq;
 using System;
 using System.Runtime.CompilerServices;
 using Xunit;
-using GitHub.Runner.Sdk;
 
 namespace GitHub.Runner.Common.Tests
 {
@@ -18,45 +16,45 @@ namespace GitHub.Runner.Common.Tests
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", nameof(CommandSettings))]
-        public void GetsArg()
+        public void GetsNameArg()
         {
             using (TestHostContext hc = CreateTestContext())
             {
                 // Arrange.
-                var command = new CommandSettings(hc, args: new string[] { "--agent", "some agent" });
+                var command = new CommandSettings(hc, args: new string[] { "--name", "some runner" });
 
                 // Act.
-                string actual = command.GetAgentName();
+                string actual = command.GetRunnerName();
 
                 // Assert.
-                Assert.Equal("some agent", actual);
+                Assert.Equal("some runner", actual);
             }
         }
 
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", nameof(CommandSettings))]
-        public void GetsArgFromEnvVar()
+        public void GetsNameArgFromEnvVar()
         {
             using (TestHostContext hc = CreateTestContext())
             {
                 try
                 {
                     // Arrange.
-                    Environment.SetEnvironmentVariable("ACTIONS_RUNNER_INPUT_AGENT", "some agent");
+                    Environment.SetEnvironmentVariable("ACTIONS_RUNNER_INPUT_NAME", "some runner");
                     var command = new CommandSettings(hc, args: new string[0]);
 
                     // Act.
-                    string actual = command.GetAgentName();
+                    string actual = command.GetRunnerName();
 
                     // Assert.
-                    Assert.Equal("some agent", actual);
-                    Assert.Equal(string.Empty, Environment.GetEnvironmentVariable("ACTIONS_RUNNER_INPUT_AGENT") ?? string.Empty); // Should remove.
-                    Assert.Equal(hc.SecretMasker.MaskSecrets("some agent"), "some agent");
+                    Assert.Equal("some runner", actual);
+                    Assert.Equal(string.Empty, Environment.GetEnvironmentVariable("ACTIONS_RUNNER_INPUT_NAME") ?? string.Empty); // Should remove.
+                    Assert.Equal("some runner", hc.SecretMasker.MaskSecrets("some runner"));
                 }
                 finally
                 {
-                    Environment.SetEnvironmentVariable("ACTIONS_RUNNER_INPUT_AGENT", null);
+                    Environment.SetEnvironmentVariable("ACTIONS_RUNNER_INPUT_NAME", null);
                 }
             }
         }
@@ -80,7 +78,7 @@ namespace GitHub.Runner.Common.Tests
                     // Assert.
                     Assert.Equal("some secret token value", actual);
                     Assert.Equal(string.Empty, Environment.GetEnvironmentVariable("ACTIONS_RUNNER_INPUT_TOKEN") ?? string.Empty); // Should remove.
-                    Assert.Equal(hc.SecretMasker.MaskSecrets("some secret token value"), "***");
+                    Assert.Equal("***", hc.SecretMasker.MaskSecrets("some secret token value"));
                 }
                 finally
                 {
@@ -250,7 +248,7 @@ namespace GitHub.Runner.Common.Tests
                     bool actual = command.Unattended;
 
                     // Assert.
-                    Assert.Equal(true, actual);
+                    Assert.True(actual);
                     Assert.Equal(string.Empty, Environment.GetEnvironmentVariable("ACTIONS_RUNNER_INPUT_UNATTENDED") ?? string.Empty); // Should remove.
                 }
                 finally
@@ -314,26 +312,26 @@ namespace GitHub.Runner.Common.Tests
                 var command = new CommandSettings(hc, args: new string[] { "--unattended" });
                 _promptManager
                     .Setup(x => x.ReadValue(
-                        Constants.Runner.CommandLine.Args.Agent, // argName
+                        Constants.Runner.CommandLine.Args.Name, // argName
                         "Enter the name of runner:", // description
                         false, // secret
                         Environment.MachineName, // defaultValue
                         Validators.NonEmptyValidator, // validator
                         true)) // unattended
-                    .Returns("some agent");
+                    .Returns("some runner");
 
                 // Act.
-                string actual = command.GetAgentName();
+                string actual = command.GetRunnerName();
 
                 // Assert.
-                Assert.Equal("some agent", actual);
+                Assert.Equal("some runner", actual);
             }
         }
 
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", nameof(CommandSettings))]
-        public void PromptsForAgent()
+        public void PromptsForRunnerName()
         {
             using (TestHostContext hc = CreateTestContext())
             {
@@ -341,19 +339,19 @@ namespace GitHub.Runner.Common.Tests
                 var command = new CommandSettings(hc, args: new string[0]);
                 _promptManager
                     .Setup(x => x.ReadValue(
-                        Constants.Runner.CommandLine.Args.Agent, // argName
+                        Constants.Runner.CommandLine.Args.Name, // argName
                         "Enter the name of runner:", // description
                         false, // secret
                         Environment.MachineName, // defaultValue
                         Validators.NonEmptyValidator, // validator
                         false)) // unattended
-                    .Returns("some agent");
+                    .Returns("some runner");
 
                 // Act.
-                string actual = command.GetAgentName();
+                string actual = command.GetRunnerName();
 
                 // Assert.
-                Assert.Equal("some agent", actual);
+                Assert.Equal("some runner", actual);
             }
         }
 
@@ -387,7 +385,7 @@ namespace GitHub.Runner.Common.Tests
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", nameof(CommandSettings))]
-        public void PromptsForPassword()
+        public void PromptsForRunnerRegisterToken()
         {
             using (TestHostContext hc = CreateTestContext())
             {
@@ -395,46 +393,19 @@ namespace GitHub.Runner.Common.Tests
                 var command = new CommandSettings(hc, args: new string[0]);
                 _promptManager
                     .Setup(x => x.ReadValue(
-                        Constants.Runner.CommandLine.Args.Password, // argName
-                        "What is your GitHub password?", // description
+                        Constants.Runner.CommandLine.Args.Token, // argName
+                        "What is your runner register token?", // description
                         true, // secret
                         string.Empty, // defaultValue
                         Validators.NonEmptyValidator, // validator
                         false)) // unattended
-                    .Returns("some password");
+                    .Returns("some token");
 
                 // Act.
-                string actual = command.GetPassword();
+                string actual = command.GetRunnerRegisterToken();
 
                 // Assert.
-                Assert.Equal("some password", actual);
-            }
-        }
-
-        [Fact]
-        [Trait("Level", "L0")]
-        [Trait("Category", nameof(CommandSettings))]
-        public void PromptsForPool()
-        {
-            using (TestHostContext hc = CreateTestContext())
-            {
-                // Arrange.
-                var command = new CommandSettings(hc, args: new string[0]);
-                _promptManager
-                    .Setup(x => x.ReadValue(
-                        Constants.Runner.CommandLine.Args.Pool, // argName
-                        "Enter the name of your runner pool:", // description
-                        false, // secret
-                        "default", // defaultValue
-                        Validators.NonEmptyValidator, // validator
-                        false)) // unattended
-                    .Returns("some pool");
-
-                // Act.
-                string actual = command.GetPool();
-
-                // Assert.
-                Assert.Equal("some pool", actual);
+                Assert.Equal("some token", actual);
             }
         }
 
@@ -500,7 +471,7 @@ namespace GitHub.Runner.Common.Tests
                 _promptManager
                     .Setup(x => x.ReadValue(
                         Constants.Runner.CommandLine.Args.Token, // argName
-                        "Enter your personal access token:", // description
+                        "What is your pool admin oauth access token?", // description
                         true, // secret
                         string.Empty, // defaultValue
                         Validators.NonEmptyValidator, // validator
@@ -509,6 +480,33 @@ namespace GitHub.Runner.Common.Tests
 
                 // Act.
                 string actual = command.GetToken();
+
+                // Assert.
+                Assert.Equal("some token", actual);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", nameof(CommandSettings))]
+        public void PromptsForRunnerDeletionToken()
+        {
+            using (TestHostContext hc = CreateTestContext())
+            {
+                // Arrange.
+                var command = new CommandSettings(hc, args: new string[0]);
+                _promptManager
+                    .Setup(x => x.ReadValue(
+                        Constants.Runner.CommandLine.Args.Token, // argName
+                        "Enter runner deletion token:", // description
+                        true, // secret
+                        string.Empty, // defaultValue
+                        Validators.NonEmptyValidator, // validator
+                        false)) // unattended
+                    .Returns("some token");
+
+                // Act.
+                string actual = command.GetRunnerDeletionToken();
 
                 // Assert.
                 Assert.Equal("some token", actual);
@@ -539,33 +537,6 @@ namespace GitHub.Runner.Common.Tests
 
                 // Assert.
                 Assert.Equal("some url", actual);
-            }
-        }
-
-        [Fact]
-        [Trait("Level", "L0")]
-        [Trait("Category", nameof(CommandSettings))]
-        public void PromptsForUserName()
-        {
-            using (TestHostContext hc = CreateTestContext())
-            {
-                // Arrange.
-                var command = new CommandSettings(hc, args: new string[0]);
-                _promptManager
-                    .Setup(x => x.ReadValue(
-                        Constants.Runner.CommandLine.Args.UserName, // argName
-                        "What is your GitHub username?", // description
-                        false, // secret
-                        string.Empty, // defaultValue
-                        Validators.NonEmptyValidator, // validator
-                        false)) // unattended
-                    .Returns("some user name");
-
-                // Act.
-                string actual = command.GetUserName();
-
-                // Assert.
-                Assert.Equal("some user name", actual);
             }
         }
 
@@ -720,7 +691,7 @@ namespace GitHub.Runner.Common.Tests
                 var command = new CommandSettings(hc, args: new string[] { "badcommand" });
 
                 // Assert.
-                Assert.True(command.Validate().Contains("badcommand"));
+                Assert.Contains("badcommand", command.Validate());
             }
         }
 
@@ -735,7 +706,7 @@ namespace GitHub.Runner.Common.Tests
                 var command = new CommandSettings(hc, args: new string[] { "--badflag" });
 
                 // Assert.
-                Assert.True(command.Validate().Contains("badflag"));
+                Assert.Contains("badflag", command.Validate());
             }
         }
 
@@ -750,7 +721,7 @@ namespace GitHub.Runner.Common.Tests
                 var command = new CommandSettings(hc, args: new string[] { "--badargname", "bad arg value" });
 
                 // Assert.
-                Assert.True(command.Validate().Contains("badargname"));
+                Assert.Contains("badargname", command.Validate());
             }
         }
 
@@ -766,8 +737,8 @@ namespace GitHub.Runner.Common.Tests
                     args: new string[] {
                         "configure",
                         "--unattended",
-                        "--agent",
-                        "test agent" });
+                        "--name",
+                        "test runner" });
 
                 // Assert.
                 Assert.True(command.Validate().Count == 0);

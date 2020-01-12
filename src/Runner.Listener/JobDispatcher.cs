@@ -22,7 +22,6 @@ namespace GitHub.Runner.Listener
         void Run(Pipelines.AgentJobRequestMessage message, bool runOnce = false);
         bool Cancel(JobCancelMessage message);
         Task WaitAsync(CancellationToken token);
-        TaskResult GetLocalRunJobResult(AgentJobRequestMessage message);
         Task ShutdownAsync();
     }
 
@@ -163,11 +162,6 @@ namespace GitHub.Runner.Listener
                     }
                 }
             }
-        }
-
-        public TaskResult GetLocalRunJobResult(AgentJobRequestMessage message)
-        {
-            return _localRunJobResult.Value[message.RequestId];
         }
 
         public async Task ShutdownAsync()
@@ -373,37 +367,29 @@ namespace GitHub.Runner.Listener
                             ArgUtil.NotNullOrEmpty(pipeHandleOut, nameof(pipeHandleOut));
                             ArgUtil.NotNullOrEmpty(pipeHandleIn, nameof(pipeHandleIn));
 
-                            if (HostContext.RunMode == RunMode.Normal)
+                            // Save STDOUT from worker, worker will use STDOUT report unhandle exception.
+                            processInvoker.OutputDataReceived += delegate (object sender, ProcessDataReceivedEventArgs stdout)
                             {
-                                // Save STDOUT from worker, worker will use STDOUT report unhandle exception.
-                                processInvoker.OutputDataReceived += delegate (object sender, ProcessDataReceivedEventArgs stdout)
+                                if (!string.IsNullOrEmpty(stdout.Data))
                                 {
-                                    if (!string.IsNullOrEmpty(stdout.Data))
+                                    lock (_outputLock)
                                     {
-                                        lock (_outputLock)
-                                        {
-                                            workerOutput.Add(stdout.Data);
-                                        }
+                                        workerOutput.Add(stdout.Data);
                                     }
-                                };
+                                }
+                            };
 
-                                // Save STDERR from worker, worker will use STDERR on crash.
-                                processInvoker.ErrorDataReceived += delegate (object sender, ProcessDataReceivedEventArgs stderr)
-                                {
-                                    if (!string.IsNullOrEmpty(stderr.Data))
-                                    {
-                                        lock (_outputLock)
-                                        {
-                                            workerOutput.Add(stderr.Data);
-                                        }
-                                    }
-                                };
-                            }
-                            else if (HostContext.RunMode == RunMode.Local)
+                            // Save STDERR from worker, worker will use STDERR on crash.
+                            processInvoker.ErrorDataReceived += delegate (object sender, ProcessDataReceivedEventArgs stderr)
                             {
-                                processInvoker.OutputDataReceived += (object sender, ProcessDataReceivedEventArgs e) => Console.WriteLine(e.Data);
-                                processInvoker.ErrorDataReceived += (object sender, ProcessDataReceivedEventArgs e) => Console.WriteLine(e.Data);
-                            }
+                                if (!string.IsNullOrEmpty(stderr.Data))
+                                {
+                                    lock (_outputLock)
+                                    {
+                                        workerOutput.Add(stderr.Data);
+                                    }
+                                }
+                            };
 
                             // Start the child process.
                             HostContext.WritePerfCounter("StartingWorkerProcess");
@@ -468,7 +454,7 @@ namespace GitHub.Runner.Listener
                     // send notification to machine provisioner.
                     var systemConnection = message.Resources.Endpoints.SingleOrDefault(x => string.Equals(x.Name, WellKnownServiceEndpointNames.SystemVssConnection, StringComparison.OrdinalIgnoreCase));
                     var accessToken = systemConnection?.Authorization?.Parameters["AccessToken"];
-                    await notification.JobStarted(message.JobId, accessToken, systemConnection.Url);
+                    notification.JobStarted(message.JobId, accessToken, systemConnection.Url);
 
                     HostContext.WritePerfCounter($"SentJobToWorker_{requestId.ToString()}");
 
@@ -582,6 +568,10 @@ namespace GitHub.Runner.Listener
                             {
                                 Trace.Info("worker process has been killed.");
                             }
+
+                            // When worker doesn't exit within cancel timeout, the runner will kill the worker process and worker won't finish upload job logs.
+                            // The runner will try to upload these logs at this time.
+                            await TryUploadUnfinishedLogs(message);
                         }
 
                         Trace.Info($"finish job request for job {message.JobId} with result: {resultOnAbandonOrCancel}");
@@ -726,15 +716,120 @@ namespace GitHub.Runner.Listener
             }
         }
 
+        // Best effort upload any logs for this job.
+        private async Task TryUploadUnfinishedLogs(Pipelines.AgentJobRequestMessage message)
+        {
+            Trace.Entering();
+
+            var logFolder = Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Diag), PagingLogger.PagingFolder);
+            if (!Directory.Exists(logFolder))
+            {
+                return;
+            }
+
+            var logs = Directory.GetFiles(logFolder);
+            if (logs.Length == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var systemConnection = message.Resources.Endpoints.SingleOrDefault(x => string.Equals(x.Name, WellKnownServiceEndpointNames.SystemVssConnection));
+                ArgUtil.NotNull(systemConnection, nameof(systemConnection));
+
+                var jobServer = HostContext.GetService<IJobServer>();
+                VssCredentials jobServerCredential = VssUtil.GetVssCredential(systemConnection);
+                VssConnection jobConnection = VssUtil.CreateConnection(systemConnection.Url, jobServerCredential);
+
+                await jobServer.ConnectAsync(jobConnection);
+
+                var timeline = await jobServer.GetTimelineAsync(message.Plan.ScopeIdentifier, message.Plan.PlanType, message.Plan.PlanId, message.Timeline.Id, CancellationToken.None);
+
+                var updatedRecords = new List<TimelineRecord>();
+                var logPages = new Dictionary<Guid, Dictionary<int, string>>();
+                var logRecords = new Dictionary<Guid, TimelineRecord>();
+                foreach (var log in logs)
+                {
+                    var logName = Path.GetFileNameWithoutExtension(log);
+                    var logPageSeperator = logName.IndexOf('_');
+                    var logRecordId = Guid.Empty;
+                    var pageNumber = 0;
+                    if (logPageSeperator < 0)
+                    {
+                        Trace.Warning($"log file '{log}' doesn't follow naming convension 'GUID_INT'.");
+                        continue;
+                    }
+                    else
+                    {
+                        if (!Guid.TryParse(logName.Substring(0, logPageSeperator), out logRecordId))
+                        {
+                            Trace.Warning($"log file '{log}' doesn't follow naming convension 'GUID_INT'.");
+                            continue;
+                        }
+
+                        if (!int.TryParse(logName.Substring(logPageSeperator + 1), out pageNumber))
+                        {
+                            Trace.Warning($"log file '{log}' doesn't follow naming convension 'GUID_INT'.");
+                            continue;
+                        }
+                    }
+
+                    var record = timeline.Records.FirstOrDefault(x => x.Id == logRecordId);
+                    if (record != null)
+                    {
+                        if (!logPages.ContainsKey(record.Id))
+                        {
+                            logPages[record.Id] = new Dictionary<int, string>();
+                            logRecords[record.Id] = record;
+                        }
+
+                        logPages[record.Id][pageNumber] = log;
+                    }
+                }
+
+                foreach (var pages in logPages)
+                {
+                    var record = logRecords[pages.Key];
+                    if (record.Log == null)
+                    {
+                        // Create the log
+                        record.Log = await jobServer.CreateLogAsync(message.Plan.ScopeIdentifier, message.Plan.PlanType, message.Plan.PlanId, new TaskLog(String.Format(@"logs\{0:D}", record.Id)), default(CancellationToken));
+
+                        // Need to post timeline record updates to reflect the log creation
+                        updatedRecords.Add(record.Clone());
+                    }
+
+                    for (var i = 1; i <= pages.Value.Count; i++)
+                    {
+                        var logFile = pages.Value[i];
+                        // Upload the contents
+                        using (FileStream fs = File.Open(logFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                        {
+                            var logUploaded = await jobServer.AppendLogContentAsync(message.Plan.ScopeIdentifier, message.Plan.PlanType, message.Plan.PlanId, record.Log.Id, fs, default(CancellationToken));
+                        }
+
+                        Trace.Info($"Uploaded unfinished log '{logFile}' for current job.");
+                        IOUtil.DeleteFile(logFile);
+                    }
+                }
+
+                if (updatedRecords.Count > 0)
+                {
+                    await jobServer.UpdateTimelineRecordsAsync(message.Plan.ScopeIdentifier, message.Plan.PlanType, message.Plan.PlanId, message.Timeline.Id, updatedRecords, CancellationToken.None);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Ignore any error during log upload since it's best effort
+                Trace.Error(ex);
+            }
+        }
+
         // TODO: We need send detailInfo back to DT in order to add an issue for the job
         private async Task CompleteJobRequestAsync(int poolId, Pipelines.AgentJobRequestMessage message, Guid lockToken, TaskResult result, string detailInfo = null)
         {
             Trace.Entering();
-            if (HostContext.RunMode == RunMode.Local)
-            {
-                _localRunJobResult.Value[message.RequestId] = result;
-                return;
-            }
 
             if (PlanUtil.GetFeatures(message.Plan).HasFlag(PlanFeatures.JobCompletedPlanEvent))
             {
@@ -787,38 +882,41 @@ namespace GitHub.Runner.Listener
 
                 var jobServer = HostContext.GetService<IJobServer>();
                 VssCredentials jobServerCredential = VssUtil.GetVssCredential(systemConnection);
-                Uri jobServerUrl = systemConnection.Url;
+                VssConnection jobConnection = VssUtil.CreateConnection(systemConnection.Url, jobServerCredential);
 
-                // Make sure SystemConnection Url match Config Url base for OnPremises server
-                if (!message.Variables.ContainsKey(Constants.Variables.System.ServerType) ||
-                    string.Equals(message.Variables[Constants.Variables.System.ServerType]?.Value, "OnPremises", StringComparison.OrdinalIgnoreCase))
-                {
-                    try
-                    {
-                        Uri result = null;
-                        Uri configUri = new Uri(_runnerSetting.ServerUrl);
-                        if (Uri.TryCreate(new Uri(configUri.GetComponents(UriComponents.SchemeAndServer, UriFormat.Unescaped)), jobServerUrl.PathAndQuery, out result))
-                        {
-                            //replace the schema and host portion of messageUri with the host from the
-                            //server URI (which was set at config time)
-                            jobServerUrl = result;
-                        }
-                    }
-                    catch (InvalidOperationException ex)
-                    {
-                        //cannot parse the Uri - not a fatal error
-                        Trace.Error(ex);
-                    }
-                    catch (UriFormatException ex)
-                    {
-                        //cannot parse the Uri - not a fatal error
-                        Trace.Error(ex);
-                    }
-                }
+                /* Below is the legacy 'OnPremises' code that is currently unused by the runner
+                   ToDo: re-implement code as appropriate once GHES support is added.
+                // Make sure SystemConnection Url match Config Url base for OnPremises server	
+                if (!message.Variables.ContainsKey(Constants.Variables.System.ServerType) ||	
+                    string.Equals(message.Variables[Constants.Variables.System.ServerType]?.Value, "OnPremises", StringComparison.OrdinalIgnoreCase))	
+                {	
+                    try	
+                    {	
+                        Uri result = null;	
+                        Uri configUri = new Uri(_runnerSetting.ServerUrl);	
+                        if (Uri.TryCreate(new Uri(configUri.GetComponents(UriComponents.SchemeAndServer, UriFormat.Unescaped)), jobServerUrl.PathAndQuery, out result))	
+                        {	
+                            //replace the schema and host portion of messageUri with the host from the	
+                            //server URI (which was set at config time)	
+                            jobServerUrl = result;	
+                        }	
+                    }	
+                    catch (InvalidOperationException ex)	
+                    {	
+                        //cannot parse the Uri - not a fatal error	
+                        Trace.Error(ex);	
+                    }	
+                    catch (UriFormatException ex)	
+                    {	
+                        //cannot parse the Uri - not a fatal error	
+                        Trace.Error(ex);	
+                    }	
+                } */
 
-                VssConnection jobConnection = VssUtil.CreateConnection(jobServerUrl, jobServerCredential);
                 await jobServer.ConnectAsync(jobConnection);
+
                 var timeline = await jobServer.GetTimelineAsync(message.Plan.ScopeIdentifier, message.Plan.PlanType, message.Plan.PlanId, message.Timeline.Id, CancellationToken.None);
+
                 ArgUtil.NotNull(timeline, nameof(timeline));
                 TimelineRecord jobRecord = timeline.Records.FirstOrDefault(x => x.Id == message.JobId && x.RecordType == "Job");
                 ArgUtil.NotNull(jobRecord, nameof(jobRecord));

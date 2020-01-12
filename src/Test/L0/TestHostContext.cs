@@ -22,7 +22,7 @@ namespace GitHub.Runner.Common.Tests
         private readonly ITraceManager _traceManager;
         private readonly Terminal _term;
         private readonly SecretMasker _secretMasker;
-        private CancellationTokenSource _agentShutdownTokenSource = new CancellationTokenSource();
+        private CancellationTokenSource _runnerShutdownTokenSource = new CancellationTokenSource();
         private string _suiteName;
         private string _testName;
         private Tracing _trace;
@@ -30,7 +30,7 @@ namespace GitHub.Runner.Common.Tests
         private string _tempDirectoryRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("D"));
         private StartupType _startupType;
         public event EventHandler Unloading;
-        public CancellationToken RunnerShutdownToken => _agentShutdownTokenSource.Token;
+        public CancellationToken RunnerShutdownToken => _runnerShutdownTokenSource.Token;
         public ShutdownReason RunnerShutdownReason { get; private set; }
         public ISecretMasker SecretMasker => _secretMasker;
         public TestHostContext(object testClass, [CallerMemberName] string testName = "")
@@ -68,18 +68,9 @@ namespace GitHub.Runner.Common.Tests
             _term.Silent = true;
             SetSingleton<ITerminal>(_term);
             EnqueueInstance<ITerminal>(_term);
-
-#if !OS_WINDOWS
-            string eulaFile = Path.Combine(GetDirectory(WellKnownDirectory.Externals), Constants.Path.TeeDirectory, "license.html");
-            Directory.CreateDirectory(GetDirectory(WellKnownDirectory.Externals));
-            Directory.CreateDirectory(Path.Combine(GetDirectory(WellKnownDirectory.Externals), Constants.Path.TeeDirectory));
-            File.WriteAllText(eulaFile, "testeulafile");
-#endif
         }
 
         public CultureInfo DefaultCulture { get; private set; }
-
-        public RunMode RunMode { get; set; }
 
         public string TraceFileName { get; private set; }
 
@@ -96,6 +87,8 @@ namespace GitHub.Runner.Common.Tests
         }
 
         public ProductInfoHeaderValue UserAgent => new ProductInfoHeaderValue("L0Test", "0.0");
+
+        public RunnerWebProxy WebProxy => new RunnerWebProxy();
 
         public async Task Delay(TimeSpan delay, CancellationToken token)
         {
@@ -204,7 +197,8 @@ namespace GitHub.Runner.Common.Tests
                     break;
 
                 case WellKnownDirectory.Tools:
-                    path = Environment.GetEnvironmentVariable("AGENT_TOOLSDIRECTORY") ?? Environment.GetEnvironmentVariable(Constants.Variables.Agent.ToolsDirectory);
+                    path = Environment.GetEnvironmentVariable("RUNNER_TOOL_CACHE");
+                    
                     if (string.IsNullOrEmpty(path))
                     {
                         path = Path.Combine(
@@ -280,24 +274,6 @@ namespace GitHub.Runner.Common.Tests
                         ".certificates");
                     break;
 
-                case WellKnownConfigFile.Proxy:
-                    path = Path.Combine(
-                        GetDirectory(WellKnownDirectory.Root),
-                        ".proxy");
-                    break;
-
-                case WellKnownConfigFile.ProxyCredentials:
-                    path = Path.Combine(
-                        GetDirectory(WellKnownDirectory.Root),
-                        ".proxycredentials");
-                    break;
-
-                case WellKnownConfigFile.ProxyBypass:
-                    path = Path.Combine(
-                        GetDirectory(WellKnownDirectory.Root),
-                        ".proxybypass");
-                    break;
-
                 case WellKnownConfigFile.Options:
                     path = Path.Combine(
                         GetDirectory(WellKnownDirectory.Root),
@@ -328,7 +304,7 @@ namespace GitHub.Runner.Common.Tests
         {
             ArgUtil.NotNull(reason, nameof(reason));
             RunnerShutdownReason = reason;
-            _agentShutdownTokenSource.Cancel();
+            _runnerShutdownTokenSource.Cancel();
         }
 
         public void WritePerfCounter(string counter)

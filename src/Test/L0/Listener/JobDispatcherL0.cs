@@ -17,14 +17,14 @@ namespace GitHub.Runner.Common.Tests.Listener
     {
         private Mock<IProcessChannel> _processChannel;
         private Mock<IProcessInvoker> _processInvoker;
-        private Mock<IRunnerServer> _agentServer;
+        private Mock<IRunnerServer> _runnerServer;
         private Mock<IConfigurationStore> _configurationStore;
 
         public JobDispatcherL0()
         {
             _processChannel = new Mock<IProcessChannel>();
             _processInvoker = new Mock<IProcessInvoker>();
-            _agentServer = new Mock<IRunnerServer>();
+            _runnerServer = new Mock<IRunnerServer>();
             _configurationStore = new Mock<IConfigurationStore>();
         }
 
@@ -32,18 +32,15 @@ namespace GitHub.Runner.Common.Tests.Listener
         {
             TaskOrchestrationPlanReference plan = new TaskOrchestrationPlanReference();
             TimelineReference timeline = null;
-            JobEnvironment environment = new JobEnvironment();
-            List<TaskInstance> tasks = new List<TaskInstance>();
-            Guid JobId = Guid.NewGuid();
-            var jobRequest = new AgentJobRequestMessage(plan, timeline, JobId, "someJob", "someJob", environment, tasks);
-            var result = Pipelines.AgentJobRequestMessageUtil.Convert(jobRequest);
+            Guid jobId = Guid.NewGuid();
+            var result = new Pipelines.AgentJobRequestMessage(plan, timeline, jobId, "someJob", "someJob", null, null, null, new Dictionary<string, VariableValue>(), new List<MaskHint>(), new Pipelines.JobResources(), new Pipelines.ContextData.DictionaryContextData(), new Pipelines.WorkspaceOptions(), new List<Pipelines.ActionStep>(), null);
             result.ContextData["github"] = new Pipelines.ContextData.DictionaryContextData();
             return result;
         }
 
         [Fact]
         [Trait("Level", "L0")]
-        [Trait("Category", "Agent")]
+        [Trait("Category", "Runner")]
         public async void DispatchesJobRequest()
         {
             //Arrange
@@ -51,7 +48,7 @@ namespace GitHub.Runner.Common.Tests.Listener
             {
                 var jobDispatcher = new JobDispatcher();
                 hc.SetSingleton<IConfigurationStore>(_configurationStore.Object);
-                hc.SetSingleton<IRunnerServer>(_agentServer.Object);
+                hc.SetSingleton<IRunnerServer>(_runnerServer.Object);
 
                 hc.EnqueueInstance<IProcessChannel>(_processChannel.Object);
                 hc.EnqueueInstance<IProcessInvoker>(_processInvoker.Object);
@@ -76,9 +73,9 @@ namespace GitHub.Runner.Common.Tests.Listener
                 Assert.NotNull(sessionIdProperty);
                 sessionIdProperty.SetValue(request, DateTime.UtcNow.AddMinutes(5));
 
-                _agentServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).Returns(Task.FromResult<TaskAgentJobRequest>(request));
+                _runnerServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).Returns(Task.FromResult<TaskAgentJobRequest>(request));
 
-                _agentServer.Setup(x => x.FinishAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<DateTime>(), It.IsAny<TaskResult>(), It.IsAny<CancellationToken>())).Returns(Task.FromResult<TaskAgentJobRequest>(new TaskAgentJobRequest()));
+                _runnerServer.Setup(x => x.FinishAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<DateTime>(), It.IsAny<TaskResult>(), It.IsAny<CancellationToken>())).Returns(Task.FromResult<TaskAgentJobRequest>(new TaskAgentJobRequest()));
 
 
                 //Actt
@@ -93,7 +90,7 @@ namespace GitHub.Runner.Common.Tests.Listener
 
         [Fact]
         [Trait("Level", "L0")]
-        [Trait("Category", "Agent")]
+        [Trait("Category", "Runner")]
         public async void DispatcherRenewJobRequest()
         {
             //Arrange
@@ -112,10 +109,10 @@ namespace GitHub.Runner.Common.Tests.Listener
                 Assert.NotNull(lockUntilProperty);
                 lockUntilProperty.SetValue(request, DateTime.UtcNow.AddMinutes(5));
 
-                hc.SetSingleton<IRunnerServer>(_agentServer.Object);
+                hc.SetSingleton<IRunnerServer>(_runnerServer.Object);
                 hc.SetSingleton<IConfigurationStore>(_configurationStore.Object);
                 _configurationStore.Setup(x => x.GetSettings()).Returns(new RunnerSettings() { PoolId = 1 });
-                _agentServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                _runnerServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                             .Returns(() =>
                             {
                                 count++;
@@ -145,13 +142,13 @@ namespace GitHub.Runner.Common.Tests.Listener
                 await jobDispatcher.RenewJobRequestAsync(poolId, requestId, Guid.Empty, firstJobRequestRenewed, cancellationTokenSource.Token);
 
                 Assert.True(firstJobRequestRenewed.Task.IsCompletedSuccessfully);
-                _agentServer.Verify(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(5));
+                _runnerServer.Verify(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(5));
             }
         }
 
         [Fact]
         [Trait("Level", "L0")]
-        [Trait("Category", "Agent")]
+        [Trait("Category", "Runner")]
         public async void DispatcherRenewJobRequestStopOnJobNotFoundExceptions()
         {
             //Arrange
@@ -170,10 +167,10 @@ namespace GitHub.Runner.Common.Tests.Listener
                 Assert.NotNull(lockUntilProperty);
                 lockUntilProperty.SetValue(request, DateTime.UtcNow.AddMinutes(5));
 
-                hc.SetSingleton<IRunnerServer>(_agentServer.Object);
+                hc.SetSingleton<IRunnerServer>(_runnerServer.Object);
                 hc.SetSingleton<IConfigurationStore>(_configurationStore.Object);
                 _configurationStore.Setup(x => x.GetSettings()).Returns(new RunnerSettings() { PoolId = 1 });
-                _agentServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                _runnerServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                             .Returns(() =>
                             {
                                 count++;
@@ -204,13 +201,13 @@ namespace GitHub.Runner.Common.Tests.Listener
 
                 Assert.True(firstJobRequestRenewed.Task.IsCompletedSuccessfully, "First renew should succeed.");
                 Assert.False(cancellationTokenSource.IsCancellationRequested);
-                _agentServer.Verify(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(5));
+                _runnerServer.Verify(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(5));
             }
         }
 
         [Fact]
         [Trait("Level", "L0")]
-        [Trait("Category", "Agent")]
+        [Trait("Category", "Runner")]
         public async void DispatcherRenewJobRequestStopOnJobTokenExpiredExceptions()
         {
             //Arrange
@@ -229,10 +226,10 @@ namespace GitHub.Runner.Common.Tests.Listener
                 Assert.NotNull(lockUntilProperty);
                 lockUntilProperty.SetValue(request, DateTime.UtcNow.AddMinutes(5));
 
-                hc.SetSingleton<IRunnerServer>(_agentServer.Object);
+                hc.SetSingleton<IRunnerServer>(_runnerServer.Object);
                 hc.SetSingleton<IConfigurationStore>(_configurationStore.Object);
                 _configurationStore.Setup(x => x.GetSettings()).Returns(new RunnerSettings() { PoolId = 1 });
-                _agentServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                _runnerServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                             .Returns(() =>
                             {
                                 count++;
@@ -263,13 +260,13 @@ namespace GitHub.Runner.Common.Tests.Listener
 
                 Assert.True(firstJobRequestRenewed.Task.IsCompletedSuccessfully, "First renew should succeed.");
                 Assert.False(cancellationTokenSource.IsCancellationRequested);
-                _agentServer.Verify(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(5));
+                _runnerServer.Verify(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(5));
             }
         }
 
         [Fact]
         [Trait("Level", "L0")]
-        [Trait("Category", "Agent")]
+        [Trait("Category", "Runner")]
         public async void DispatcherRenewJobRequestRecoverFromExceptions()
         {
             //Arrange
@@ -288,10 +285,10 @@ namespace GitHub.Runner.Common.Tests.Listener
                 Assert.NotNull(lockUntilProperty);
                 lockUntilProperty.SetValue(request, DateTime.UtcNow.AddMinutes(5));
 
-                hc.SetSingleton<IRunnerServer>(_agentServer.Object);
+                hc.SetSingleton<IRunnerServer>(_runnerServer.Object);
                 hc.SetSingleton<IConfigurationStore>(_configurationStore.Object);
                 _configurationStore.Setup(x => x.GetSettings()).Returns(new RunnerSettings() { PoolId = 1 });
-                _agentServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                _runnerServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                             .Returns(() =>
                             {
                                 count++;
@@ -322,15 +319,15 @@ namespace GitHub.Runner.Common.Tests.Listener
 
                 Assert.True(firstJobRequestRenewed.Task.IsCompletedSuccessfully, "First renew should succeed.");
                 Assert.True(cancellationTokenSource.IsCancellationRequested);
-                _agentServer.Verify(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(8));
-                _agentServer.Verify(x => x.RefreshConnectionAsync(RunnerConnectionType.JobRequest, It.IsAny<TimeSpan>()), Times.Exactly(3));
-                _agentServer.Verify(x => x.SetConnectionTimeout(RunnerConnectionType.JobRequest, It.IsAny<TimeSpan>()), Times.Once);
+                _runnerServer.Verify(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(8));
+                _runnerServer.Verify(x => x.RefreshConnectionAsync(RunnerConnectionType.JobRequest, It.IsAny<TimeSpan>()), Times.Exactly(3));
+                _runnerServer.Verify(x => x.SetConnectionTimeout(RunnerConnectionType.JobRequest, It.IsAny<TimeSpan>()), Times.Once);
             }
         }
 
         [Fact]
         [Trait("Level", "L0")]
-        [Trait("Category", "Agent")]
+        [Trait("Category", "Runner")]
         public async void DispatcherRenewJobRequestFirstRenewRetrySixTimes()
         {
             //Arrange
@@ -349,10 +346,10 @@ namespace GitHub.Runner.Common.Tests.Listener
                 Assert.NotNull(lockUntilProperty);
                 lockUntilProperty.SetValue(request, DateTime.UtcNow.AddMinutes(5));
 
-                hc.SetSingleton<IRunnerServer>(_agentServer.Object);
+                hc.SetSingleton<IRunnerServer>(_runnerServer.Object);
                 hc.SetSingleton<IConfigurationStore>(_configurationStore.Object);
                 _configurationStore.Setup(x => x.GetSettings()).Returns(new RunnerSettings() { PoolId = 1 });
-                _agentServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                _runnerServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                             .Returns(() =>
                             {
                                 count++;
@@ -379,13 +376,13 @@ namespace GitHub.Runner.Common.Tests.Listener
 
                 Assert.False(firstJobRequestRenewed.Task.IsCompletedSuccessfully, "First renew should failed.");
                 Assert.False(cancellationTokenSource.IsCancellationRequested);
-                _agentServer.Verify(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(6));
+                _runnerServer.Verify(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(6));
             }
         }
 
         [Fact]
         [Trait("Level", "L0")]
-        [Trait("Category", "Agent")]
+        [Trait("Category", "Runner")]
         public async void DispatcherRenewJobRequestStopOnExpiredRequest()
         {
             //Arrange
@@ -404,10 +401,10 @@ namespace GitHub.Runner.Common.Tests.Listener
                 Assert.NotNull(lockUntilProperty);
                 lockUntilProperty.SetValue(request, DateTime.UtcNow.AddMinutes(5));
 
-                hc.SetSingleton<IRunnerServer>(_agentServer.Object);
+                hc.SetSingleton<IRunnerServer>(_runnerServer.Object);
                 hc.SetSingleton<IConfigurationStore>(_configurationStore.Object);
                 _configurationStore.Setup(x => x.GetSettings()).Returns(new RunnerSettings() { PoolId = 1 });
-                _agentServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                _runnerServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                             .Returns(() =>
                             {
                                 count++;
@@ -443,15 +440,15 @@ namespace GitHub.Runner.Common.Tests.Listener
 
                 Assert.True(firstJobRequestRenewed.Task.IsCompletedSuccessfully, "First renew should succeed.");
                 Assert.False(cancellationTokenSource.IsCancellationRequested);
-                _agentServer.Verify(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(5));
-                _agentServer.Verify(x => x.RefreshConnectionAsync(RunnerConnectionType.JobRequest, It.IsAny<TimeSpan>()), Times.Exactly(3));
-                _agentServer.Verify(x => x.SetConnectionTimeout(RunnerConnectionType.JobRequest, It.IsAny<TimeSpan>()), Times.Never);
+                _runnerServer.Verify(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(5));
+                _runnerServer.Verify(x => x.RefreshConnectionAsync(RunnerConnectionType.JobRequest, It.IsAny<TimeSpan>()), Times.Exactly(3));
+                _runnerServer.Verify(x => x.SetConnectionTimeout(RunnerConnectionType.JobRequest, It.IsAny<TimeSpan>()), Times.Never);
             }
         }
 
         [Fact]
         [Trait("Level", "L0")]
-        [Trait("Category", "Agent")]
+        [Trait("Category", "Runner")]
         public async void DispatchesOneTimeJobRequest()
         {
             //Arrange
@@ -459,7 +456,7 @@ namespace GitHub.Runner.Common.Tests.Listener
             {
                 var jobDispatcher = new JobDispatcher();
                 hc.SetSingleton<IConfigurationStore>(_configurationStore.Object);
-                hc.SetSingleton<IRunnerServer>(_agentServer.Object);
+                hc.SetSingleton<IRunnerServer>(_runnerServer.Object);
 
                 hc.EnqueueInstance<IProcessChannel>(_processChannel.Object);
                 hc.EnqueueInstance<IProcessInvoker>(_processInvoker.Object);
@@ -484,9 +481,9 @@ namespace GitHub.Runner.Common.Tests.Listener
                 Assert.NotNull(sessionIdProperty);
                 sessionIdProperty.SetValue(request, DateTime.UtcNow.AddMinutes(5));
 
-                _agentServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).Returns(Task.FromResult<TaskAgentJobRequest>(request));
+                _runnerServer.Setup(x => x.RenewAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).Returns(Task.FromResult<TaskAgentJobRequest>(request));
 
-                _agentServer.Setup(x => x.FinishAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<DateTime>(), It.IsAny<TaskResult>(), It.IsAny<CancellationToken>())).Returns(Task.FromResult<TaskAgentJobRequest>(new TaskAgentJobRequest()));
+                _runnerServer.Setup(x => x.FinishAgentRequestAsync(It.IsAny<int>(), It.IsAny<long>(), It.IsAny<Guid>(), It.IsAny<DateTime>(), It.IsAny<TaskResult>(), It.IsAny<CancellationToken>())).Returns(Task.FromResult<TaskAgentJobRequest>(new TaskAgentJobRequest()));
 
                 //Act
                 jobDispatcher.Run(message, true);

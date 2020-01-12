@@ -9,7 +9,7 @@ namespace GitHub.Runner.Common.Tests
     {
         [Fact]
         [Trait("Level", "L0")]
-        [Trait("Category", "Agent")]
+        [Trait("Category", "Runner")]
         public void BuildConstantGenerateSucceed()
         {
             List<string> validPackageNames = new List<string>()
@@ -18,7 +18,7 @@ namespace GitHub.Runner.Common.Tests
                 "win-x86",
                 "linux-x64",
                 "linux-arm",
-                "rhel.6-x64",
+                "linux-arm64",
                 "osx-x64"
             };
 

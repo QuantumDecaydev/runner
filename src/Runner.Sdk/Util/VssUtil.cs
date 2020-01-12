@@ -14,7 +14,7 @@ namespace GitHub.Runner.Sdk
 {
     public static class VssUtil
     {
-        public static void InitializeVssClientSettings(ProductInfoHeaderValue additionalUserAgent, IWebProxy proxy, IVssClientCertificateManager clientCert)
+        public static void InitializeVssClientSettings(ProductInfoHeaderValue additionalUserAgent, IWebProxy proxy)
         {
             var headerValues = new List<ProductInfoHeaderValue>();
             headerValues.Add(additionalUserAgent);
@@ -26,14 +26,6 @@ namespace GitHub.Runner.Sdk
             }
 
             VssClientHttpRequestSettings.Default.UserAgent = headerValues;
-            VssClientHttpRequestSettings.Default.ClientCertificateManager = clientCert;
-#if OS_LINUX || OS_OSX
-            // The .NET Core 2.1 runtime switched its HTTP default from HTTP 1.1 to HTTP 2.
-            // This causes problems with some versions of the Curl handler.
-            // See GitHub issue https://github.com/dotnet/corefx/issues/32376
-            VssClientHttpRequestSettings.Default.UseHttp11 = true;
-#endif
-
             VssHttpMessageHandler.DefaultWebProxy = proxy;
         }
 
@@ -90,7 +82,7 @@ namespace GitHub.Runner.Sdk
             if (serviceEndpoint.Authorization.Scheme == EndpointAuthorizationSchemes.OAuth &&
                 serviceEndpoint.Authorization.Parameters.TryGetValue(EndpointAuthorizationParameters.AccessToken, out accessToken))
             {
-                credentials = new VssCredentials(null, new VssOAuthAccessTokenCredential(accessToken), CredentialPromptType.DoNotPrompt);
+                credentials = new VssCredentials(new VssOAuthAccessTokenCredential(accessToken), CredentialPromptType.DoNotPrompt);
             }
 
             return credentials;

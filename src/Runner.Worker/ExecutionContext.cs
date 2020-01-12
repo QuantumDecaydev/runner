@@ -12,14 +12,14 @@ using GitHub.Services.WebApi;
 using GitHub.DistributedTask.Pipelines;
 using GitHub.DistributedTask.Pipelines.ContextData;
 using GitHub.DistributedTask.WebApi;
-using Pipelines = GitHub.DistributedTask.Pipelines;
-using ObjectTemplating = GitHub.DistributedTask.ObjectTemplating;
 using GitHub.Runner.Common.Util;
 using GitHub.Runner.Common;
 using GitHub.Runner.Sdk;
 using Newtonsoft.Json;
 using System.Text;
 using System.Collections;
+using ObjectTemplating = GitHub.DistributedTask.ObjectTemplating;
+using Pipelines = GitHub.DistributedTask.Pipelines;
 
 namespace GitHub.Runner.Worker
 {
@@ -41,7 +41,6 @@ namespace GitHub.Runner.Worker
         TaskResult? CommandResult { get; set; }
         CancellationToken CancellationToken { get; }
         List<ServiceEndpoint> Endpoints { get; }
-        List<SecureFile> SecureFiles { get; }
 
         PlanFeatures Features { get; }
         Variables Variables { get; }
@@ -61,6 +60,8 @@ namespace GitHub.Runner.Worker
 
         // Only job level ExecutionContext has PostJobSteps
         Stack<IStep> PostJobSteps { get; }
+
+        bool EchoOnActionCommand { get; set; }
 
         // Initialize
         void InitializeJob(Pipelines.AgentJobRequestMessage message, CancellationToken token);
@@ -96,7 +97,7 @@ namespace GitHub.Runner.Worker
 
         // others
         void ForceTaskComplete();
-        void RegisterPostJobAction(string displayName, string condition, Pipelines.ActionStep action);
+        void RegisterPostJobStep(string refName, IStep step);
     }
 
     public sealed class ExecutionContext : RunnerService, IExecutionContext
@@ -134,7 +135,6 @@ namespace GitHub.Runner.Worker
         public Task ForceCompleted => _forceCompleted.Task;
         public CancellationToken CancellationToken => _cancellationTokenSource.Token;
         public List<ServiceEndpoint> Endpoints { get; private set; }
-        public List<SecureFile> SecureFiles { get; private set; }
         public Variables Variables { get; private set; }
         public Dictionary<string, string> IntraActionState { get; private set; }
         public HashSet<string> OutputVariables => _outputvariables;
@@ -152,6 +152,8 @@ namespace GitHub.Runner.Worker
 
         // Only job level ExecutionContext has PostJobSteps
         public Stack<IStep> PostJobSteps { get; private set; }
+
+        public bool EchoOnActionCommand { get; set; }
 
 
         public TaskResult? Result
@@ -236,27 +238,10 @@ namespace GitHub.Runner.Worker
             });
         }
 
-        public void RegisterPostJobAction(string displayName, string condition, Pipelines.ActionStep action)
+        public void RegisterPostJobStep(string refName, IStep step)
         {
-            if (action.Reference.Type != ActionSourceType.Repository)
-            {
-                throw new NotSupportedException("Only action that has `action.yml` can define post job execution.");
-            }
-
-            var repositoryReference = action.Reference as RepositoryPathReference;
-            var pathString = string.IsNullOrEmpty(repositoryReference.Path) ? string.Empty : $"/{repositoryReference.Path}";
-            var repoString = string.IsNullOrEmpty(repositoryReference.Ref) ? $"{repositoryReference.Name}{pathString}" :
-                $"{repositoryReference.Name}{pathString}@{repositoryReference.Ref}";
-
-            this.Debug($"Register post job cleanup for action: {repoString}");
-
-            var actionRunner = HostContext.CreateService<IActionRunner>();
-            actionRunner.Action = action;
-            actionRunner.Stage = ActionRunStage.Post;
-            actionRunner.Condition = condition;
-            actionRunner.DisplayName = displayName;
-            actionRunner.ExecutionContext = Root.CreatePostChild(displayName, $"{actionRunner.Action.Name}_post", IntraActionState);
-            Root.PostJobSteps.Push(actionRunner);
+            step.ExecutionContext = Root.CreatePostChild(step.DisplayName, refName, IntraActionState);
+            Root.PostJobSteps.Push(step);
         }
 
         public IExecutionContext CreateChild(Guid recordId, string displayName, string refName, string scopeName, string contextName, Dictionary<string, string> intraActionState = null, int? recordOrder = null)
@@ -270,7 +255,6 @@ namespace GitHub.Runner.Worker
             child.Features = Features;
             child.Variables = Variables;
             child.Endpoints = Endpoints;
-            child.SecureFiles = SecureFiles;
             if (intraActionState == null)
             {
                 child.IntraActionState = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -292,6 +276,7 @@ namespace GitHub.Runner.Worker
             child.PrependPath = PrependPath;
             child.Container = Container;
             child.ServiceContainers = ServiceContainers;
+            child.EchoOnActionCommand = EchoOnActionCommand;
 
             if (recordOrder != null)
             {
@@ -561,9 +546,6 @@ namespace GitHub.Runner.Worker
             // Endpoints
             Endpoints = message.Resources.Endpoints;
 
-            // SecureFiles
-            SecureFiles = message.Resources.SecureFiles;
-
             // Variables
             Variables = new Variables(HostContext, message.Variables);
 
@@ -628,67 +610,6 @@ namespace GitHub.Runner.Worker
 
             // PostJobSteps for job ExecutionContext
             PostJobSteps = new Stack<IStep>();
-            // Proxy variables
-            //             var agentWebProxy = HostContext.GetService<IRunnerWebProxy>();
-            //             if (!string.IsNullOrEmpty(agentWebProxy.ProxyAddress))
-            //             {
-            //                 SetRunnerContext("proxyurl", agentWebProxy.ProxyAddress);
-
-            //                 if (!string.IsNullOrEmpty(agentWebProxy.ProxyUsername))
-            //                 {
-            //                     SetRunnerContext("proxyusername", agentWebProxy.ProxyUsername);
-            //                 }
-
-            //                 if (!string.IsNullOrEmpty(agentWebProxy.ProxyPassword))
-            //                 {
-            //                     HostContext.SecretMasker.AddValue(agentWebProxy.ProxyPassword);
-            //                     SetRunnerContext("proxypassword", agentWebProxy.ProxyPassword);
-            //                 }
-
-            //                 if (agentWebProxy.ProxyBypassList.Count > 0)
-            //                 {
-            //                     SetRunnerContext("proxybypasslist", JsonUtility.ToString(agentWebProxy.ProxyBypassList));
-            //                 }
-            //             }
-
-            //             // Certificate variables
-            //             var agentCert = HostContext.GetService<IRunnerCertificateManager>();
-            //             if (agentCert.SkipServerCertificateValidation)
-            //             {
-            //                 SetRunnerContext("sslskipcertvalidation", bool.TrueString);
-            //             }
-
-            //             if (!string.IsNullOrEmpty(agentCert.CACertificateFile))
-            //             {
-            //                 SetRunnerContext("sslcainfo", agentCert.CACertificateFile);
-            //             }
-
-            //             if (!string.IsNullOrEmpty(agentCert.ClientCertificateFile) &&
-            //                 !string.IsNullOrEmpty(agentCert.ClientCertificatePrivateKeyFile) &&
-            //                 !string.IsNullOrEmpty(agentCert.ClientCertificateArchiveFile))
-            //             {
-            //                 SetRunnerContext("clientcertfile", agentCert.ClientCertificateFile);
-            //                 SetRunnerContext("clientcertprivatekey", agentCert.ClientCertificatePrivateKeyFile);
-            //                 SetRunnerContext("clientcertarchive", agentCert.ClientCertificateArchiveFile);
-
-            //                 if (!string.IsNullOrEmpty(agentCert.ClientCertificatePassword))
-            //                 {
-            //                     HostContext.SecretMasker.AddValue(agentCert.ClientCertificatePassword);
-            //                     SetRunnerContext("clientcertpassword", agentCert.ClientCertificatePassword);
-            //                 }
-            //             }
-
-            //             // Runtime option variables
-            //             var runtimeOptions = HostContext.GetService<IConfigurationStore>().GetRunnerRuntimeOptions();
-            //             if (runtimeOptions != null)
-            //             {
-            // #if OS_WINDOWS
-            //                 if (runtimeOptions.GitUseSecureChannel)
-            //                 {
-            //                     SetRunnerContext("gituseschannel", runtimeOptions.GitUseSecureChannel.ToString());
-            //                 }
-            // #endif                
-            //             }
 
             // Job timeline record.
             InitializeTimelineRecord(
@@ -703,6 +624,9 @@ namespace GitHub.Runner.Worker
             // Logger (must be initialized before writing warnings).
             _logger = HostContext.CreateService<IPagingLogger>();
             _logger.Setup(_mainTimelineId, _record.Id);
+
+            // Initialize 'echo on action command success' property, default to false, unless Step_Debug is set
+            EchoOnActionCommand = Variables.Step_Debug ?? false;
 
             // Verbosity (from GitHub.Step_Debug).
             WriteDebug = Variables.Step_Debug ?? false;
@@ -882,33 +806,6 @@ namespace GitHub.Runner.Worker
             if (!_throttlingReported)
             {
                 this.Warning(string.Format("The job is currently being throttled by the server. You may experience delays in console line output, job status reporting, and action log uploads."));
-
-                if (!String.IsNullOrEmpty(this.Variables.System_TFCollectionUrl))
-                {
-                    // Construct a URL to the resource utilization page, to aid the user debug throttling issues
-                    UriBuilder uriBuilder = new UriBuilder(Variables.System_TFCollectionUrl);
-                    NameValueCollection query = HttpUtility.ParseQueryString(uriBuilder.Query);
-                    DateTime endTime = DateTime.UtcNow;
-                    string queryDate = endTime.AddHours(-1).ToString("s") + "," + endTime.ToString("s");
-
-                    uriBuilder.Path += (Variables.System_TFCollectionUrl.EndsWith("/") ? "" : "/") + "_usersSettings/usage";
-                    query["tab"] = "pipelines";
-                    query["queryDate"] = queryDate;
-
-                    // Global RU link
-                    uriBuilder.Query = query.ToString();
-                    string global = $"Link to resource utilization page (global 1-hour view): {uriBuilder.ToString()}.";
-
-                    if (!String.IsNullOrEmpty(this.Variables.Build_DefinitionName))
-                    {
-                        query["keywords"] = this.Variables.Build_Number;
-                        query["definition"] = this.Variables.Build_DefinitionName;
-                    }
-
-                    // RU link scoped for the build/release
-                    uriBuilder.Query = query.ToString();
-                    this.Warning($"{global}\nLink to resource utilization page (1-hour view by pipeline): {uriBuilder.ToString()}.");
-                }
 
                 _throttlingReported = true;
             }

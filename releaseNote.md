@@ -1,39 +1,70 @@
 ## Features
-  - Set Default shell to powershell for windows runners (#135)
+  - Remove runner flow: Change from PAT to "deletion token" in prompt (#225) 
+  - Expose github.run_id and github.run_number to action runtime env. (#224)
 
 ## Bugs
-  - Removed unintended additional fields on error and warning commands (#137)
+  - Clean up error messages for container scenarios (#221)
+  - Pick shell from prependpath (#231)
 
 ## Misc
-  - N/A
-
-## Agent Downloads  
-
-|         | Package                                                                                                       |
-| ------- | ----------------------------------------------------------------------------------------------------------- |
-| Windows x64 | [actions-runner-win-x64-<RUNNER_VERSION>.zip](https://githubassets.azureedge.net/runners/<RUNNER_VERSION>/actions-runner-win-x64-<RUNNER_VERSION>.zip)      |
-| macOS   | [actions-runner-osx-x64-<RUNNER_VERSION>.tar.gz](https://githubassets.azureedge.net/runners/<RUNNER_VERSION>/actions-runner-osx-x64-<RUNNER_VERSION>.tar.gz)   |
-| Linux x64  | [actions-runner-linux-x64-<RUNNER_VERSION>.tar.gz](https://githubassets.azureedge.net/runners/<RUNNER_VERSION>/actions-runner-linux-x64-<RUNNER_VERSION>.tar.gz) |
-
-After Download:  
+  - Runner code cleanup  (#218 #227, #228, #229, #230) 
+  - Consume dotnet core 3.1 in runner. (#213)
 
 ## Windows x64
-
-``` bash
-C:\> mkdir myagent && cd myagent
-C:\myagent> Add-Type -AssemblyName System.IO.Compression.FileSystem ; [System.IO.Compression.ZipFile]::ExtractToDirectory("$HOME\Downloads\actions-runner-win-x64-<RUNNER_VERSION>.zip", "$PWD")
+We recommend configuring the runner under "<DRIVE>:\actions-runner". This will help avoid issues related to service identity folder permissions and long file path restrictions on Windows
+``` 
+// Create a folder under the drive root
+mkdir \actions-runner ; cd \actions-runner
+// Download the latest runner package
+Invoke-WebRequest -Uri https://github.com/actions/runner/releases/download/v<RUNNER_VERSION>/actions-runner-win-x64-<RUNNER_VERSION>.zip -OutFile actions-runner-win-x64-<RUNNER_VERSION>.zip
+// Extract the installer
+Add-Type -AssemblyName System.IO.Compression.FileSystem ; 
+[System.IO.Compression.ZipFile]::ExtractToDirectory("$HOME\Downloads\actions-runner-win-x64-<RUNNER_VERSION>.zip", "$PWD")
 ```
 
 ## OSX
 
 ``` bash
-~/$ mkdir myagent && cd myagent
-~/myagent$ tar xzf ~/Downloads/actions-runner-osx-x64-<RUNNER_VERSION>.tar.gz
+// Create a folder
+mkdir actions-runner && cd actions-runner
+// Download the latest runner package
+curl -O https://github.com/actions/runner/releases/download/v<RUNNER_VERSION>/actions-runner-osx-x64-<RUNNER_VERSION>.tar.gz
+// Extract the installer
+tar xzf ./actions-runner-osx-x64-<RUNNER_VERSION>.tar.gz
 ```
 
 ## Linux x64
 
 ``` bash
-~/$ mkdir myagent && cd myagent
-~/myagent$ tar xzf ~/Downloads/actions-runner-linux-x64-<RUNNER_VERSION>.tar.gz
+// Create a folder
+mkdir actions-runner && cd actions-runner
+// Download the latest runner package
+curl -O https://github.com/actions/runner/releases/download/v<RUNNER_VERSION>/actions-runner-linux-x64-<RUNNER_VERSION>.tar.gz
+// Extract the installer
+tar xzf ./actions-runner-linux-x64-<RUNNER_VERSION>.tar.gz
 ```
+
+## Linux arm64 (Pre-release)
+
+``` bash
+// Create a folder
+mkdir actions-runner && cd actions-runner
+// Download the latest runner package
+curl -O https://github.com/actions/runner/releases/download/v<RUNNER_VERSION>/actions-runner-linux-arm64-<RUNNER_VERSION>.tar.gz
+// Extract the installer
+tar xzf ./actions-runner-linux-arm64-<RUNNER_VERSION>.tar.gz
+```
+
+## Linux arm (Pre-release)
+
+``` bash
+// Create a folder
+mkdir actions-runner && cd actions-runner
+// Download the latest runner package
+curl -O https://github.com/actions/runner/releases/download/v<RUNNER_VERSION>/actions-runner-linux-arm-<RUNNER_VERSION>.tar.gz
+// Extract the installer
+tar xzf ./actions-runner-linux-arm-<RUNNER_VERSION>.tar.gz
+```
+
+## Using your self hosted runner
+For additional details about configuring, running, or shutting down the runner please check out our [product docs.](https://help.github.com/en/actions/automating-your-workflow-with-github-actions/adding-self-hosted-runners)

@@ -307,9 +307,10 @@ namespace GitHub.Runner.Worker.Container
                 }
             };
 
-#if OS_WINDOWS || OS_OSX
-            throw new NotSupportedException($"Container operation is only supported on Linux");
-#else
+            if (!Constants.Runner.Platform.Equals(Constants.OSPlatform.Linux))
+            {
+                throw new NotSupportedException("Container operations are only supported on Linux runners");
+            }
             return await processInvoker.ExecuteAsync(
                             workingDirectory: HostContext.GetDirectory(WellKnownDirectory.Work),
                             fileName: DockerPath,
@@ -318,7 +319,6 @@ namespace GitHub.Runner.Worker.Container
                             requireExitCodeZero: false,
                             outputEncoding: null,
                             cancellationToken: CancellationToken.None);
-#endif
         }
 
         public async Task<List<string>> DockerInspect(IExecutionContext context, string dockerObject, string options)
@@ -347,9 +347,10 @@ namespace GitHub.Runner.Worker.Container
             processInvoker.ErrorDataReceived += stderrDataReceived;
 
 
-#if OS_WINDOWS || OS_OSX
-            throw new NotSupportedException($"Container operation is only supported on Linux");
-#else
+            if (!Constants.Runner.Platform.Equals(Constants.OSPlatform.Linux))
+            {
+                throw new NotSupportedException("Container operations are only supported on Linux runners");
+            }
             return await processInvoker.ExecuteAsync(
                 workingDirectory: context.GetGitHubContext("workspace"),
                 fileName: DockerPath,
@@ -359,7 +360,6 @@ namespace GitHub.Runner.Worker.Container
                 outputEncoding: null,
                 killProcessOnCancel: false,
                 cancellationToken: cancellationToken);
-#endif
         }
 
         private async Task<int> ExecuteDockerCommandAsync(IExecutionContext context, string command, string options, string workingDirectory, CancellationToken cancellationToken = default(CancellationToken))
@@ -378,9 +378,10 @@ namespace GitHub.Runner.Worker.Container
                 context.Output(message.Data);
             };
 
-#if OS_WINDOWS || OS_OSX
-            throw new NotSupportedException($"Container operation is only supported on Linux");
-#else
+            if (!Constants.Runner.Platform.Equals(Constants.OSPlatform.Linux))
+            {
+                throw new NotSupportedException("Container operations are only supported on Linux runners");
+            }
             return await processInvoker.ExecuteAsync(
                 workingDirectory: workingDirectory ?? context.GetGitHubContext("workspace"),
                 fileName: DockerPath,
@@ -391,7 +392,6 @@ namespace GitHub.Runner.Worker.Container
                 killProcessOnCancel: false,
                 redirectStandardIn: null,
                 cancellationToken: cancellationToken);
-#endif
         }
 
         private async Task<List<string>> ExecuteDockerCommandAsync(IExecutionContext context, string command, string options)

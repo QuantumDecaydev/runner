@@ -10,13 +10,14 @@ set -e
 
 DEV_CMD=$1
 DEV_CONFIG=$2
+DEV_TARGET_RUNTIME=$3
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAYOUT_DIR="$SCRIPT_DIR/../_layout"
 DOWNLOAD_DIR="$SCRIPT_DIR/../_downloads/netcore2x"
 PACKAGE_DIR="$SCRIPT_DIR/../_package"
 DOTNETSDK_ROOT="$SCRIPT_DIR/../_dotnetsdk"
-DOTNETSDK_VERSION="2.2.300"
+DOTNETSDK_VERSION="3.1.100"
 DOTNETSDK_INSTALLDIR="$DOTNETSDK_ROOT/$DOTNETSDK_VERSION"
 RUNNER_VERSION=$(cat runnerversion)
 
@@ -33,64 +34,60 @@ if [[ ($(uname) == "Linux") || ($(uname) == "Darwin") ]]; then
 fi
 
 if [[ "$CURRENT_PLATFORM" == 'windows' ]]; then
-   RUNTIME_ID='win-x64'
-   if [[ "$PROCESSOR_ARCHITECTURE" == 'x86' ]]; then
-      RUNTIME_ID='win-x86'
-   fi
+    RUNTIME_ID='win-x64'
+    if [[ "$PROCESSOR_ARCHITECTURE" == 'x86' ]]; then
+        RUNTIME_ID='win-x86'
+    fi
 elif [[ "$CURRENT_PLATFORM" == 'linux' ]]; then
-   RUNTIME_ID="linux-x64"
-   if command -v uname > /dev/null; then
-      CPU_NAME=$(uname -m)
-      case $CPU_NAME in
-         armv7l) RUNTIME_ID="linux-arm";;
-         aarch64) RUNTIME_ID="linux-arm";;
-      esac
-   fi
-   
-   if [ -e /etc/redhat-release ]; then
-      redhatRelease=$(</etc/redhat-release)
-      if [[ $redhatRelease == "CentOS release 6."* || $redhatRelease == "Red Hat Enterprise Linux Server release 6."* ]]; then
-         RUNTIME_ID='rhel.6-x64'
-      fi
-   fi
-   
+    RUNTIME_ID="linux-x64"
+    if command -v uname > /dev/null; then
+        CPU_NAME=$(uname -m)
+        case $CPU_NAME in
+            armv7l) RUNTIME_ID="linux-arm";;
+            aarch64) RUNTIME_ID="linux-arm64";;
+        esac
+    fi
 elif [[ "$CURRENT_PLATFORM" == 'darwin' ]]; then
-   RUNTIME_ID='osx-x64'
+    RUNTIME_ID='osx-x64'
+fi
+
+if [[ -n "$DEV_TARGET_RUNTIME" ]]; then
+    RUNTIME_ID="$DEV_TARGET_RUNTIME"
 fi
 
 # Make sure current platform support publish the dotnet runtime
 # Windows can publish win-x86/x64
-# Linux can publish linux-x64/arm/rhel.6-x64
+# Linux can publish linux-x64/arm/arm64
 # OSX can publish osx-x64
 if [[ "$CURRENT_PLATFORM" == 'windows' ]]; then
-   if [[ ("$RUNTIME_ID" != 'win-x86') && ("$RUNTIME_ID" != 'win-x64') ]]; then
-      echo "Failed: Can't build $RUNTIME_ID package $CURRENT_PLATFORM" >&2
-      exit 1
-   fi
+    if [[ ("$RUNTIME_ID" != 'win-x86') && ("$RUNTIME_ID" != 'win-x64') ]]; then
+        echo "Failed: Can't build $RUNTIME_ID package $CURRENT_PLATFORM" >&2
+        exit 1
+    fi
 elif [[ "$CURRENT_PLATFORM" == 'linux' ]]; then
-   if [[ ("$RUNTIME_ID" != 'linux-x64') && ("$RUNTIME_ID" != 'linux-arm') && ("$RUNTIME_ID" != 'rhel.6-x64') ]]; then
-      echo "Failed: Can't build $RUNTIME_ID package $CURRENT_PLATFORM" >&2
-      exit 1
-   fi
+    if [[ ("$RUNTIME_ID" != 'linux-x64') && ("$RUNTIME_ID" != 'linux-x86') && ("$RUNTIME_ID" != 'linux-arm64') && ("$RUNTIME_ID" != 'linux-arm') ]]; then
+       echo "Failed: Can't build $RUNTIME_ID package $CURRENT_PLATFORM" >&2
+       exit 1
+    fi
 elif [[ "$CURRENT_PLATFORM" == 'darwin' ]]; then
-   if [[ ("$RUNTIME_ID" != 'osx-x64') ]]; then
-      echo "Failed: Can't build $RUNTIME_ID package $CURRENT_PLATFORM" >&2
-      exit 1
-   fi
+    if [[ ("$RUNTIME_ID" != 'osx-x64') ]]; then
+       echo "Failed: Can't build $RUNTIME_ID package $CURRENT_PLATFORM" >&2
+       exit 1
+    fi
 fi
 
 function failed()
 {
-   local error=${1:-Undefined error}
-   echo "Failed: $error" >&2
-   popd
-   exit 1
+    local error=${1:-Undefined error}
+    echo "Failed: $error" >&2
+    popd
+    exit 1
 }
 
 function warn()
 {
-   local error=${1:-Undefined error}
-   echo "WARNING - FAILED: $error" >&2
+    local error=${1:-Undefined error}
+    echo "WARNING - FAILED: $error" >&2
 }
 
 function checkRC() {
@@ -112,13 +109,13 @@ function heading()
 function build ()
 {
     heading "Building ..."
-    dotnet msbuild -t:Build -p:PackageRuntime="${RUNTIME_ID}" -p:BUILDCONFIG="${BUILD_CONFIG}" -p:AgentVersion="${RUNNER_VERSION}" || failed build
+    dotnet msbuild -t:Build -p:PackageRuntime="${RUNTIME_ID}" -p:BUILDCONFIG="${BUILD_CONFIG}" -p:RunnerVersion="${RUNNER_VERSION}" ./dir.proj || failed build
 }
 
 function layout ()
 {
     heading "Create layout ..."
-    dotnet msbuild -t:layout -p:PackageRuntime="${RUNTIME_ID}" -p:BUILDCONFIG="${BUILD_CONFIG}" -p:AgentVersion="${RUNNER_VERSION}" || failed build
+    dotnet msbuild -t:layout -p:PackageRuntime="${RUNTIME_ID}" -p:BUILDCONFIG="${BUILD_CONFIG}" -p:RunnerVersion="${RUNNER_VERSION}" ./dir.proj || failed build
 
     #change execution flag to allow running with sudo
     if [[ ("$CURRENT_PLATFORM" == "linux") || ("$CURRENT_PLATFORM" == "darwin") ]]; then
@@ -140,9 +137,7 @@ function runtest ()
         ulimit -n 1024
     fi
 
-    export GITHUB_RUNNER_SRC_DIR=${SCRIPT_DIR}
-
-    dotnet msbuild -t:test -p:PackageRuntime="${RUNTIME_ID}" -p:BUILDCONFIG="${BUILD_CONFIG}" -p:AgentVersion="${RUNNER_VERSION}" || failed "failed tests" 
+    dotnet msbuild -t:test -p:PackageRuntime="${RUNTIME_ID}" -p:BUILDCONFIG="${BUILD_CONFIG}" -p:RunnerVersion="${RUNNER_VERSION}" ./dir.proj || failed "failed tests" 
 }
 
 function package ()
@@ -151,7 +146,8 @@ function package ()
         echo "You must build first.  Expecting to find ${LAYOUT_DIR}/bin"
     fi
 
-    runner_ver=$("${LAYOUT_DIR}/bin/Runner.Listener" --version) || failed "version"
+    # TODO: We are cross-compiling arm on x64 so we cant exec Runner.Listener. Remove after building on native arm host
+    runner_ver=$("${LAYOUT_DIR}/bin/Runner.Listener" --version) || runner_ver=$(cat runnerversion) || failed "version"
     runner_pkg_name="actions-runner-${RUNTIME_ID}-${runner_ver}"
 
     heading "Packaging ${runner_pkg_name}"
@@ -208,8 +204,6 @@ fi
 echo "Prepend ${DOTNETSDK_INSTALLDIR} to %PATH%"
 export PATH=${DOTNETSDK_INSTALLDIR}:$PATH
 
-heading "Github Dreamlifter Runner"
-
 heading "Dotnet SDK Version"
 dotnet --version
 
@@ -233,15 +227,15 @@ if [[ "$CURRENT_PLATFORM" == 'windows' ]]; then
 fi
 
 case $DEV_CMD in
-   "build") build;;
-   "b") build;;
-   "test") runtest;;
-   "t") runtest;;
-   "layout") layout;;
-   "l") layout;;
-   "package") package;;
-   "p") package;;
-   *) echo "Invalid cmd.  Use build(b), test(t), layout(l) or package(p)";;
+    "build") build;;
+    "b") build;;
+    "test") runtest;;
+    "t") runtest;;
+    "layout") layout;;
+    "l") layout;;
+    "package") package;;
+    "p") package;;
+    *) echo "Invalid cmd.  Use build(b), test(t), layout(l) or package(p)";;
 esac
 
 popd

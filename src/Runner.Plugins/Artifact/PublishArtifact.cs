@@ -4,9 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using GitHub.Build.WebApi;
 using GitHub.Services.Common;
-using GitHub.DistributedTask.WebApi;
 using GitHub.Runner.Sdk;
 
 namespace GitHub.Runner.Plugins.Artifact
@@ -45,11 +43,8 @@ namespace GitHub.Runner.Plugins.Artifact
                 throw new ArgumentException($"Artifact name is not valid: {artifactName}. It cannot contain '\\', '/', \"', ':', '<', '>', '|', '*', and '?'");
             }
 
-            // Project ID
-            Guid projectId = new Guid(context.Variables.GetValueOrDefault(BuildVariables.TeamProjectId)?.Value ?? Guid.Empty.ToString());
-
             // Build ID
-            string buildIdStr = context.Variables.GetValueOrDefault(BuildVariables.BuildId)?.Value ?? string.Empty;
+            string buildIdStr = context.Variables.GetValueOrDefault(SdkConstants.Variables.Build.BuildId)?.Value ?? string.Empty;
             if (!int.TryParse(buildIdStr, out int buildId))
             {
                 throw new ArgumentException($"Run Id is not an Int32: {buildIdStr}");
@@ -65,26 +60,45 @@ namespace GitHub.Runner.Plugins.Artifact
             }
 
             // Container ID
-            string containerIdStr = context.Variables.GetValueOrDefault(BuildVariables.ContainerId)?.Value ?? string.Empty;
+            string containerIdStr = context.Variables.GetValueOrDefault(SdkConstants.Variables.Build.ContainerId)?.Value ?? string.Empty;
             if (!long.TryParse(containerIdStr, out long containerId))
             {
-                throw new ArgumentException($"Container Id is not a Int64: {containerIdStr}");
+                throw new ArgumentException($"Container Id is not an Int64: {containerIdStr}");
             }
 
             context.Output($"Uploading artifact '{artifactName}' from '{fullPath}' for run #{buildId}");
 
-            FileContainerServer fileContainerHelper = new FileContainerServer(context.VssConnection, projectId, containerId, artifactName);
-            long size = await fileContainerHelper.CopyToContainerAsync(context, fullPath, token);
+            FileContainerServer fileContainerHelper = new FileContainerServer(context.VssConnection, projectId: Guid.Empty, containerId, artifactName);
             var propertiesDictionary = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            propertiesDictionary.Add("artifactsize", size.ToString());
 
-            string fileContainerFullPath = StringUtil.Format($"#/{containerId}/{artifactName}");
-            context.Output($"Uploaded '{fullPath}' to server");
+            long size = 0;
 
-            BuildServer buildHelper = new BuildServer(context.VssConnection);
-            string jobId = context.Variables.GetValueOrDefault(WellKnownDistributedTaskVariables.JobId).Value ?? string.Empty;
-            var artifact = await buildHelper.AssociateArtifact(projectId, buildId, jobId, artifactName, ArtifactResourceTypes.Container, fileContainerFullPath, propertiesDictionary, token);
-            context.Output($"Associated artifact {artifactName} ({artifact.Id}) with run #{buildId}");
+            try
+            {
+                size = await fileContainerHelper.CopyToContainerAsync(context, fullPath, token);
+
+                propertiesDictionary.Add("artifactsize", size.ToString());
+
+                context.Output($"Uploaded '{size}' bytes from '{fullPath}' to server");
+            }
+            // if any of the results were successful, make sure to attach them to the build
+            finally
+            {
+                // Definition ID is a dummy value only used by HTTP client routing purposes
+                int definitionId = 1;
+
+                PipelinesServer pipelinesHelper = new PipelinesServer(context.VssConnection);
+
+                var artifact = await pipelinesHelper.AssociateActionsStorageArtifactAsync(
+                    definitionId,
+                    buildId,
+                    containerId,
+                    artifactName,
+                    size,
+                    token);
+
+                context.Output($"Associated artifact {artifactName} ({artifact.ContainerId}) with run #{buildId}"); 
+            }
         }
     }
 }

@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Runtime.CompilerServices;
 using GitHub.Runner.Sdk;
 using GitHub.Runner.Worker;
@@ -158,7 +161,7 @@ namespace GitHub.Runner.Common.Tests.Worker
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", "Worker")]
-        public void Code()
+        public void MatcherCode()
         {
             var matchers = new IssueMatchersConfig
             {
@@ -300,7 +303,7 @@ namespace GitHub.Runner.Common.Tests.Worker
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", "Worker")]
-        public void LineColumn()
+        public void MatcherLineColumn()
         {
             var matchers = new IssueMatchersConfig
             {
@@ -348,7 +351,7 @@ namespace GitHub.Runner.Common.Tests.Worker
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", "Worker")]
-        public void ProcessCommand()
+        public void MatcherDoesNotReceiveCommand()
         {
             using (Setup())
             using (_outputManager)
@@ -382,7 +385,7 @@ namespace GitHub.Runner.Common.Tests.Worker
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", "Worker")]
-        public void RemoveColorCodes()
+        public void MatcherRemoveColorCodes()
         {
             using (Setup())
             using (_outputManager)
@@ -528,7 +531,7 @@ namespace GitHub.Runner.Common.Tests.Worker
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", "Worker")]
-        public void Severity()
+        public void MatcherSeverity()
         {
             var matchers = new IssueMatchersConfig
             {
@@ -589,7 +592,7 @@ namespace GitHub.Runner.Common.Tests.Worker
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", "Worker")]
-        public void Timeout()
+        public void MatcherTimeout()
         {
             Environment.SetEnvironmentVariable("GITHUB_ACTIONS_RUNNER_ISSUE_MATCHER_TIMEOUT", "0:0:0.01");
             var matchers = new IssueMatchersConfig
@@ -640,10 +643,166 @@ namespace GitHub.Runner.Common.Tests.Worker
             }
         }
 
-        // todo: roots file against fromPath
-        // todo: roots file against system.defaultWorkingDirectory
-        // todo: matches repository
-        // todo: checks file exists
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async void MatcherFile()
+        {
+            Environment.SetEnvironmentVariable("RUNNER_TEST_GET_REPOSITORY_PATH_FAILSAFE", "2");
+            var matchers = new IssueMatchersConfig
+            {
+                Matchers =
+                {
+                    new IssueMatcherConfig
+                    {
+                        Owner = "my-matcher-1",
+                        Patterns = new[]
+                        {
+                            new IssuePatternConfig
+                            {
+                                Pattern = @"(.+): (.+)",
+                                File = 1,
+                                Message = 2,
+                            },
+                        },
+                    },
+                },
+            };
+            using (var hostContext = Setup(matchers: matchers))
+            using (_outputManager)
+            {
+                // Setup github.workspace, github.repository
+                var workDirectory = hostContext.GetDirectory(WellKnownDirectory.Work);
+                ArgUtil.NotNullOrEmpty(workDirectory, nameof(workDirectory));
+                Directory.CreateDirectory(workDirectory);
+                var workspaceDirectory = Path.Combine(workDirectory, "workspace");
+                Directory.CreateDirectory(workspaceDirectory);
+                _executionContext.Setup(x => x.GetGitHubContext("workspace")).Returns(workspaceDirectory);
+                _executionContext.Setup(x => x.GetGitHubContext("repository")).Returns("my-org/workflow-repo");
+
+                // Setup some git repositories
+                // <WORKSPACE>/workflow-repo
+                // <WORKSPACE>/workflow-repo/nested-other-repo
+                // <WORKSPACE>/other-repo
+                // <WORKSPACE>/other-repo/nested-workflow-repo
+                var workflowRepository = Path.Combine(workspaceDirectory, "workflow-repo");
+                var nestedOtherRepository = Path.Combine(workspaceDirectory, "workflow-repo", "nested-other-repo");
+                var otherRepository = Path.Combine(workspaceDirectory, workflowRepository, "nested-other-repo");
+                var nestedWorkflowRepository = Path.Combine(workspaceDirectory, "other-repo", "nested-workflow-repo");
+                await CreateRepository(hostContext, workflowRepository, "https://github.com/my-org/workflow-repo");
+                await CreateRepository(hostContext, nestedOtherRepository, "https://github.com/my-org/other-repo");
+                await CreateRepository(hostContext, otherRepository, "https://github.com/my-org/other-repo");
+                await CreateRepository(hostContext, nestedWorkflowRepository, "https://github.com/my-org/workflow-repo");
+
+                // Create test files
+                var file_noRepository = Path.Combine(workspaceDirectory, "no-repo.txt");
+                var file_workflowRepository = Path.Combine(workflowRepository, "workflow-repo.txt");
+                var file_workflowRepository_nestedDirectory = Path.Combine(workflowRepository, "subdir", "subdir2", "workflow-repo-nested-dir.txt");
+                var file_workflowRepository_failsafe = Path.Combine(workflowRepository, "failsafe-subdir", "failsafe-subdir2", "failsafe-subdir3", "workflow-repo-failsafe.txt");
+                var file_nestedOtherRepository = Path.Combine(nestedOtherRepository, "nested-other-repo");
+                var file_otherRepository = Path.Combine(otherRepository, "other-repo.txt");
+                var file_nestedWorkflowRepository = Path.Combine(nestedWorkflowRepository, "nested-workflow-repo.txt");
+                foreach (var file in new[] { file_noRepository, file_workflowRepository, file_workflowRepository_nestedDirectory, file_workflowRepository_failsafe, file_nestedOtherRepository, file_otherRepository, file_nestedWorkflowRepository })
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(file));
+                    File.WriteAllText(file, "");
+                }
+
+                // Process
+                Process($"{file_noRepository}: some error 1");
+                Process($"{file_workflowRepository}: some error 2");
+                Process($"{file_workflowRepository.Substring(workspaceDirectory.Length + 1)}: some error 3"); // Relative path from workspace dir
+                Process($"{file_workflowRepository_nestedDirectory}: some error 4");
+                Process($"{file_workflowRepository_failsafe}: some error 5");
+                Process($"{file_nestedOtherRepository}: some error 6");
+                Process($"{file_otherRepository}: some error 7");
+                Process($"{file_nestedWorkflowRepository}: some error 8");
+
+                Assert.Equal(8, _issues.Count);
+
+                Assert.Equal("some error 1", _issues[0].Item1.Message);
+                Assert.False(_issues[0].Item1.Data.ContainsKey("file"));
+
+                Assert.Equal("some error 2", _issues[1].Item1.Message);
+                Assert.Equal(file_workflowRepository.Substring(workflowRepository.Length + 1).Replace(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), _issues[1].Item1.Data["file"]);
+
+                Assert.Equal("some error 3", _issues[2].Item1.Message);
+                Assert.Equal(file_workflowRepository.Substring(workflowRepository.Length + 1).Replace(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), _issues[2].Item1.Data["file"]);
+
+                Assert.Equal("some error 4", _issues[3].Item1.Message);
+                Assert.Equal(file_workflowRepository_nestedDirectory.Substring(workflowRepository.Length + 1).Replace(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), _issues[3].Item1.Data["file"]);
+
+                Assert.Equal("some error 5", _issues[4].Item1.Message);
+                Assert.False(_issues[4].Item1.Data.ContainsKey("file"));
+
+                Assert.Equal("some error 6", _issues[5].Item1.Message);
+                Assert.False(_issues[5].Item1.Data.ContainsKey("file"));
+
+                Assert.Equal("some error 7", _issues[6].Item1.Message);
+                Assert.False(_issues[6].Item1.Data.ContainsKey("file"));
+
+                Assert.Equal("some error 8", _issues[7].Item1.Message);
+                Assert.Equal(file_nestedWorkflowRepository.Substring(nestedWorkflowRepository.Length + 1).Replace(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), _issues[7].Item1.Data["file"]);
+            }
+
+            Environment.SetEnvironmentVariable("RUNNER_TEST_GET_REPOSITORY_PATH_FAILSAFE", "");
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
+        public async void MatcherFromPath()
+        {
+            var matchers = new IssueMatchersConfig
+            {
+                Matchers =
+                {
+                    new IssueMatcherConfig
+                    {
+                        Owner = "my-matcher-1",
+                        Patterns = new[]
+                        {
+                            new IssuePatternConfig
+                            {
+                                Pattern = @"(.+): (.+) \[(.+)\]",
+                                File = 1,
+                                Message = 2,
+                                FromPath = 3,
+                            },
+                        },
+                    },
+                },
+            };
+            using (var hostContext = Setup(matchers: matchers))
+            using (_outputManager)
+            {
+                // Setup github.workspace, github.repository
+                var workDirectory = hostContext.GetDirectory(WellKnownDirectory.Work);
+                ArgUtil.NotNullOrEmpty(workDirectory, nameof(workDirectory));
+                Directory.CreateDirectory(workDirectory);
+                var workspaceDirectory = Path.Combine(workDirectory, "workspace");
+                Directory.CreateDirectory(workspaceDirectory);
+                _executionContext.Setup(x => x.GetGitHubContext("workspace")).Returns(workspaceDirectory);
+                _executionContext.Setup(x => x.GetGitHubContext("repository")).Returns("my-org/workflow-repo");
+
+                // Setup a git repository
+                var repositoryPath = Path.Combine(workspaceDirectory, "workflow-repo");
+                await CreateRepository(hostContext, repositoryPath, "https://github.com/my-org/workflow-repo");
+
+                // Create a test file
+                var filePath = Path.Combine(repositoryPath, "some-project", "some-directory", "some-file.txt");
+                Directory.CreateDirectory(Path.GetDirectoryName(filePath));
+                File.WriteAllText(filePath, "");
+
+                // Process
+                Process("some-directory/some-file.txt: some error [workflow-repo/some-project/some-project.proj]");
+                Assert.Equal(1, _issues.Count);
+                Assert.Equal("some error", _issues[0].Item1.Message);
+                Assert.Equal("some-project/some-directory/some-file.txt", _issues[0].Item1.Data["file"]);
+                Assert.Equal(0, _commands.Count);
+                Assert.Equal(0, _messages.Count);
+            }
+        }
 
         private TestHostContext Setup(
             [CallerMemberName] string name = "",
@@ -723,6 +882,23 @@ namespace GitHub.Runner.Common.Tests.Worker
         private void Process(string line)
         {
             _outputManager.OnDataReceived(null, new ProcessDataReceivedEventArgs(line));
+        }
+
+        private async Task CreateRepository(TestHostContext hostConetxt, string path, string url)
+        {
+            Directory.CreateDirectory(path);
+            var gitPath = WhichUtil.Which("git", true);
+            var environment = new Dictionary<string, string>();
+
+            using (var processInvoker = new ProcessInvoker(hostConetxt.GetTrace()))
+            {
+                await processInvoker.ExecuteAsync(path, gitPath, "init", environment, CancellationToken.None);
+            }
+
+            using (var processInvoker = new ProcessInvoker(hostConetxt.GetTrace()))
+            {
+                await processInvoker.ExecuteAsync(path, gitPath, $"remote add origin {url}", environment, CancellationToken.None);
+            }
         }
     }
 }

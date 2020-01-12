@@ -11,6 +11,7 @@ using GitHub.Runner.Common;
 using GitHub.Runner.Sdk;
 using GitHub.DistributedTask.Pipelines.ContextData;
 using Microsoft.Win32;
+using GitHub.DistributedTask.Pipelines.ObjectTemplating;
 
 namespace GitHub.Runner.Worker
 {
@@ -34,9 +35,21 @@ namespace GitHub.Runner.Worker
         public async Task StartContainersAsync(IExecutionContext executionContext, object data)
         {
             Trace.Entering();
+            if (!Constants.Runner.Platform.Equals(Constants.OSPlatform.Linux))
+            {
+                throw new NotSupportedException("Container operations are only supported on Linux runners");
+            }
             ArgUtil.NotNull(executionContext, nameof(executionContext));
             List<ContainerInfo> containers = data as List<ContainerInfo>;
             ArgUtil.NotNull(containers, nameof(containers));
+
+            var postJobStep = new JobExtensionRunner(runAsync: this.StopContainersAsync,
+                                                condition: $"{PipelineTemplateConstants.Always}()",
+                                                displayName: "Stop containers",
+                                                data: data);
+            
+            executionContext.Debug($"Register post job cleanup for stopping/deleting containers.");
+            executionContext.RegisterPostJobStep(nameof(StopContainersAsync), postJobStep);
 
             // Check whether we are inside a container.
             // Our container feature requires to map working directory from host to the container.
@@ -48,9 +61,6 @@ namespace GitHub.Runner.Worker
             {
                 throw new NotSupportedException("Container feature is not supported when runner is already running inside container.");
             }
-#elif OS_RHEL6
-            // Red Hat and CentOS 6 do not support the container feature
-            throw new NotSupportedException("Runner does not support the container feature on Red Hat Enterprise Linux 6 or CentOS 6.");
 #else
             var initProcessCgroup = File.ReadLines("/proc/1/cgroup");
             if (initProcessCgroup.Any(x => x.IndexOf(":/docker/", StringComparison.OrdinalIgnoreCase) >= 0))
@@ -119,7 +129,7 @@ namespace GitHub.Runner.Worker
                 executionContext.Warning($"Delete stale container networks failed, docker network prune fail with exit code {networkPruneExitCode}");
             }
 
-            // Create local docker network for this job to avoid port conflict when multiple agents run on same machine.
+            // Create local docker network for this job to avoid port conflict when multiple runners run on same machine.
             // All containers within a job join the same network
             var containerNetwork = $"github_network_{Guid.NewGuid().ToString("N")}";
             await CreateContainerNetworkAsync(executionContext, containerNetwork);

@@ -19,7 +19,7 @@ namespace GitHub.Runner.Worker
     public interface IJobExtension : IRunnerService
     {
         Task<List<IStep>> InitializeJob(IExecutionContext jobContext, Pipelines.AgentJobRequestMessage message);
-        Task FinalizeJob(IExecutionContext jobContext, Pipelines.AgentJobRequestMessage message, DateTime jobStartTimeUtc);
+        void FinalizeJob(IExecutionContext jobContext, Pipelines.AgentJobRequestMessage message, DateTime jobStartTimeUtc);
     }
 
     public sealed class JobExtension : RunnerService, IJobExtension
@@ -42,7 +42,6 @@ namespace GitHub.Runner.Worker
 
             List<IStep> preJobSteps = new List<IStep>();
             List<IStep> jobSteps = new List<IStep>();
-            List<IStep> postJobSteps = new List<IStep>();
             using (var register = jobContext.CancellationToken.Register(() => { context.CancelToken(); }))
             {
                 try
@@ -55,10 +54,13 @@ namespace GitHub.Runner.Worker
                     context.Debug($"Primary repository: {repoFullName}");
 
                     // Print proxy setting information for better diagnostic experience
-                    var runnerWebProxy = HostContext.GetService<IRunnerWebProxy>();
-                    if (!string.IsNullOrEmpty(runnerWebProxy.ProxyAddress))
+                    if (!string.IsNullOrEmpty(HostContext.WebProxy.HttpProxyAddress))
                     {
-                        context.Output($"Runner is running behind proxy server: '{runnerWebProxy.ProxyAddress}'");
+                        context.Output($"Runner is running behind proxy server '{HostContext.WebProxy.HttpProxyAddress}' for all HTTP requests.");
+                    }
+                    if (!string.IsNullOrEmpty(HostContext.WebProxy.HttpsProxyAddress))
+                    {
+                        context.Output($"Runner is running behind proxy server '{HostContext.WebProxy.HttpsProxyAddress}' for all HTTPS requests.");
                     }
 
                     // Prepare the workflow directory
@@ -110,9 +112,7 @@ namespace GitHub.Runner.Worker
                         }
                     }
 
-                    // Build up 3 lists of steps, pre-job, job, post-job
-                    var postJobStepsBuilder = new Stack<IStep>();
-
+                    // Build up 2 lists of steps, pre-job, job
                     // Download actions not already in the cache
                     Trace.Info("Downloading actions");
                     var actionManager = HostContext.GetService<IActionManager>();
@@ -134,10 +134,6 @@ namespace GitHub.Runner.Worker
                                                                           condition: $"{PipelineTemplateConstants.Success}()",
                                                                           displayName: "Initialize containers",
                                                                           data: (object)containers));
-                        postJobStepsBuilder.Push(new JobExtensionRunner(runAsync: containerProvider.StopContainersAsync,
-                                                                        condition: $"{PipelineTemplateConstants.Always}()",
-                                                                        displayName: "Stop containers",
-                                                                        data: (object)containers));
                     }
 
                     // Add action steps
@@ -187,33 +183,9 @@ namespace GitHub.Runner.Worker
                         }
                     }
 
-                    // Add post-job steps
-                    Trace.Info("Adding post-job steps");
-                    while (postJobStepsBuilder.Count > 0)
-                    {
-                        postJobSteps.Add(postJobStepsBuilder.Pop());
-                    }
-
-                    // Create execution context for post-job steps
-                    foreach (var step in postJobSteps)
-                    {
-                        if (step is JobExtensionRunner)
-                        {
-                            JobExtensionRunner extensionStep = step as JobExtensionRunner;
-                            ArgUtil.NotNull(extensionStep, extensionStep.DisplayName);
-                            Guid stepId = Guid.NewGuid();
-                            extensionStep.ExecutionContext = jobContext.CreateChild(stepId, extensionStep.DisplayName, stepId.ToString("N"), null, null);
-                        }
-                    }
-
                     List<IStep> steps = new List<IStep>();
                     steps.AddRange(preJobSteps);
                     steps.AddRange(jobSteps);
-                    steps.AddRange(postJobSteps);
-
-                    // Start agent log plugin host process
-                    // var logPlugin = HostContext.GetService<IAgentLogPlugin>();
-                    // await logPlugin.StartAsync(context, steps, jobContext.CancellationToken);
 
                     // Prepare for orphan process cleanup
                     _processCleanup = jobContext.Variables.GetBoolean("process.clean") ?? true;
@@ -258,7 +230,7 @@ namespace GitHub.Runner.Worker
             }
         }
 
-        public async Task FinalizeJob(IExecutionContext jobContext, Pipelines.AgentJobRequestMessage message, DateTime jobStartTimeUtc)
+        public void FinalizeJob(IExecutionContext jobContext, Pipelines.AgentJobRequestMessage message, DateTime jobStartTimeUtc)
         {
             Trace.Entering();
             ArgUtil.NotNull(jobContext, nameof(jobContext));
@@ -272,19 +244,6 @@ namespace GitHub.Runner.Worker
                     context.Start();
                     context.Debug("Starting: Complete job");
 
-                    // Wait for agent log plugin process exits
-                    // var logPlugin = HostContext.GetService<IAgentLogPlugin>();
-                    // try
-                    // {
-                    //     await logPlugin.WaitAsync(context);
-                    // }
-                    // catch (Exception ex)
-                    // {
-                    //     // Log and ignore the error from log plugin finalization.
-                    //     Trace.Error($"Caught exception from log plugin finalization: {ex}");
-                    //     context.Output(ex.Message);
-                    // }
-
                     if (context.Variables.GetBoolean(Constants.Variables.Actions.RunnerDebug) ?? false)
                     {
                         Trace.Info("Support log upload starting.");
@@ -294,7 +253,7 @@ namespace GitHub.Runner.Worker
 
                         try
                         {
-                            await diagnosticLogManager.UploadDiagnosticLogsAsync(executionContext: context, parentContext: jobContext, message: message, jobStartTimeUtc: jobStartTimeUtc);
+                            diagnosticLogManager.UploadDiagnosticLogs(executionContext: context, parentContext: jobContext, message: message, jobStartTimeUtc: jobStartTimeUtc);
 
                             Trace.Info("Support log upload complete.");
                             context.Output("Completed runner diagnostic log upload");

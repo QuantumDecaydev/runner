@@ -1,12 +1,12 @@
-﻿using GitHub.DistributedTask.WebApi;
-using GitHub.Runner.Common.Util;
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using GitHub.DistributedTask.WebApi;
 using GitHub.DistributedTask.Logging;
 using GitHub.DistributedTask.Pipelines.ContextData;
 using GitHub.Runner.Common;
+using GitHub.Runner.Common.Util;
 using GitHub.Runner.Sdk;
 
 namespace GitHub.Runner.Worker
@@ -62,10 +62,7 @@ namespace GitHub.Runner.Worker
 
         // DO NOT add file path variable to here.
         // All file path variables needs to be retrive and set through ExecutionContext, so it can handle container file path translation.
-
-        public string Build_DefinitionName => Get(Constants.Variables.Build.DefinitionName);
-
-        public string Build_Number => Get(Constants.Variables.Build.Number);
+        public string Build_Number => Get(SdkConstants.Variables.Build.BuildNumber);
 
 #if OS_WINDOWS
         public bool Retain_Default_Encoding => false;
@@ -73,43 +70,9 @@ namespace GitHub.Runner.Worker
         public bool Retain_Default_Encoding => true;
 #endif
 
-        public string System_CollectionId => Get(Constants.Variables.System.CollectionId);
-
         public bool? Step_Debug => GetBoolean(Constants.Variables.Actions.StepDebug);
 
-        public string System_DefinitionId => Get(Constants.Variables.System.DefinitionId);
-
         public string System_PhaseDisplayName => Get(Constants.Variables.System.PhaseDisplayName);
-
-        public string System_TFCollectionUrl => Get(WellKnownDistributedTaskVariables.TFCollectionUrl);
-
-        public static readonly HashSet<string> PiiVariables = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "Build.AuthorizeAs",
-            "Build.QueuedBy",
-            "Build.RequestedFor",
-            "Build.RequestedForEmail",
-            "Build.SourceBranch",
-            "Build.SourceBranchName",
-            "Build.SourceTfvcShelveset",
-            "Build.SourceVersion",
-            "Build.SourceVersionAuthor",
-            "Job.AuthorizeAs",
-            "Release.Deployment.RequestedFor",
-            "Release.Deployment.RequestedForEmail",
-            "Release.RequestedFor",
-            "Release.RequestedForEmail",
-        };
-
-        public static readonly string PiiArtifactVariablePrefix = "Release.Artifacts";
-
-        public static readonly List<string> PiiArtifactVariableSuffixes = new List<string>()
-        {
-            "SourceBranch",
-            "SourceBranchName",
-            "SourceVersion",
-            "RequestedFor"
-        };
 
         public string Get(string name)
         {

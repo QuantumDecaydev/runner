@@ -24,6 +24,7 @@ namespace GitHub.Runner.Sdk
     {
         private readonly string DebugEnvironmentalVariable = "ACTIONS_STEP_DEBUG";
         private VssConnection _connection;
+        private RunnerWebProxy _webProxy;
         private readonly object _stdoutLock = new object();
         private readonly ITraceWriter _trace; // for unit tests
 
@@ -57,6 +58,19 @@ namespace GitHub.Runner.Sdk
             }
         }
 
+        [JsonIgnore]
+        public RunnerWebProxy WebProxy
+        {
+            get
+            {
+                if (_webProxy == null)
+                {
+                    _webProxy = new RunnerWebProxy();
+                }
+                return _webProxy;
+            }
+        }
+
         public VssConnection InitializeVssConnection()
         {
             var headerValues = new List<ProductInfoHeaderValue>();
@@ -69,37 +83,7 @@ namespace GitHub.Runner.Sdk
             }
 
             VssClientHttpRequestSettings.Default.UserAgent = headerValues;
-
-#if OS_LINUX || OS_OSX
-            // The .NET Core 2.1 runtime switched its HTTP default from HTTP 1.1 to HTTP 2.
-            // This causes problems with some versions of the Curl handler.
-            // See GitHub issue https://github.com/dotnet/corefx/issues/32376
-            VssClientHttpRequestSettings.Default.UseHttp11 = true;
-#endif
-
-            var certSetting = GetCertConfiguration();
-            if (certSetting != null)
-            {
-                if (!string.IsNullOrEmpty(certSetting.ClientCertificateArchiveFile))
-                {
-                    VssClientHttpRequestSettings.Default.ClientCertificateManager = new RunnerClientCertificateManager(certSetting.ClientCertificateArchiveFile, certSetting.ClientCertificatePassword);
-                }
-
-                if (certSetting.SkipServerCertificateValidation)
-                {
-                    VssClientHttpRequestSettings.Default.ServerCertificateValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
-                }
-            }
-
-            var proxySetting = GetProxyConfiguration();
-            if (proxySetting != null)
-            {
-                if (!string.IsNullOrEmpty(proxySetting.ProxyAddress))
-                {
-                    VssHttpMessageHandler.DefaultWebProxy = new RunnerWebProxyCore(proxySetting.ProxyAddress, proxySetting.ProxyUsername, proxySetting.ProxyPassword, proxySetting.ProxyBypassList);
-                }
-            }
-
+            VssHttpMessageHandler.DefaultWebProxy = this.WebProxy;
             ServiceEndpoint systemConnection = this.Endpoints.FirstOrDefault(e => string.Equals(e.Name, WellKnownServiceEndpointNames.SystemVssConnection, StringComparison.OrdinalIgnoreCase));
             ArgUtil.NotNull(systemConnection, nameof(systemConnection));
             ArgUtil.NotNull(systemConnection.Url, nameof(systemConnection.Url));
@@ -221,63 +205,6 @@ namespace GitHub.Runner.Sdk
             if (githubContext.TryGetValue(contextName, out var data))
             {
                 return data as StringContextData;
-            }
-            else
-            {
-                return null;
-            }
-        }
-
-        public RunnerCertificateSettings GetCertConfiguration()
-        {
-            bool skipCertValidation = StringUtil.ConvertToBoolean(GetRunnerContext("SkipCertValidation"));
-            string caFile = GetRunnerContext("CAInfo");
-            string clientCertFile = GetRunnerContext("ClientCert");
-
-            if (!string.IsNullOrEmpty(caFile) || !string.IsNullOrEmpty(clientCertFile) || skipCertValidation)
-            {
-                var certConfig = new RunnerCertificateSettings();
-                certConfig.SkipServerCertificateValidation = skipCertValidation;
-                certConfig.CACertificateFile = caFile;
-
-                if (!string.IsNullOrEmpty(clientCertFile))
-                {
-                    certConfig.ClientCertificateFile = clientCertFile;
-                    string clientCertKey = GetRunnerContext("ClientCertKey");
-                    string clientCertArchive = GetRunnerContext("ClientCertArchive");
-                    string clientCertPassword = GetRunnerContext("ClientCertPassword");
-
-                    certConfig.ClientCertificatePrivateKeyFile = clientCertKey;
-                    certConfig.ClientCertificateArchiveFile = clientCertArchive;
-                    certConfig.ClientCertificatePassword = clientCertPassword;
-
-                    certConfig.VssClientCertificateManager = new RunnerClientCertificateManager(clientCertArchive, clientCertPassword);
-                }
-
-                return certConfig;
-            }
-            else
-            {
-                return null;
-            }
-        }
-
-        public RunnerWebProxySettings GetProxyConfiguration()
-        {
-            string proxyUrl = GetRunnerContext("ProxyUrl");
-            if (!string.IsNullOrEmpty(proxyUrl))
-            {
-                string proxyUsername = GetRunnerContext("ProxyUsername");
-                string proxyPassword = GetRunnerContext("ProxyPassword");
-                List<string> proxyBypassHosts = StringUtil.ConvertFromJson<List<string>>(GetRunnerContext("ProxyBypassList") ?? "[]");
-                return new RunnerWebProxySettings()
-                {
-                    ProxyAddress = proxyUrl,
-                    ProxyUsername = proxyUsername,
-                    ProxyPassword = proxyPassword,
-                    ProxyBypassList = proxyBypassHosts,
-                    WebProxy = new RunnerWebProxyCore(proxyUrl, proxyUsername, proxyPassword, proxyBypassHosts)
-                };
             }
             else
             {

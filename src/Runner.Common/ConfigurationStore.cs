@@ -1,6 +1,8 @@
 ﻿using GitHub.Runner.Common.Util;
 using GitHub.Runner.Sdk;
+using System;
 using System.IO;
+using System.Linq;
 using System.Runtime.Serialization;
 using System.Text;
 using System.Threading;
@@ -14,22 +16,10 @@ namespace GitHub.Runner.Common
     public sealed class RunnerSettings
     {
         [DataMember(EmitDefaultValue = false)]
-        public bool AcceptTeeEula { get; set; }
-
-        [DataMember(EmitDefaultValue = false)]
         public int AgentId { get; set; }
 
         [DataMember(EmitDefaultValue = false)]
         public string AgentName { get; set; }
-
-        [DataMember(EmitDefaultValue = false)]
-        public string NotificationPipeName { get; set; }
-
-        [DataMember(EmitDefaultValue = false)]
-        public string NotificationSocketAddress { get; set; }
-
-        [DataMember(EmitDefaultValue = false)]
-        public bool SkipCapabilitiesScan { get; set; }
 
         [DataMember(EmitDefaultValue = false)]
         public bool SkipSessionRecover { get; set; }
@@ -51,15 +41,34 @@ namespace GitHub.Runner.Common
 
         [DataMember(EmitDefaultValue = false)]
         public string MonitorSocketAddress { get; set; }
-    }
 
-    [DataContract]
-    public sealed class RunnerRuntimeOptions
-    {
-#if OS_WINDOWS
-        [DataMember(EmitDefaultValue = false)]
-        public bool GitUseSecureChannel { get; set; }
-#endif
+        /// <summary>
+        // Computed property for convenience. Can either return:
+        // 1. If runner was configured at the repo level, returns something like: "myorg/myrepo"
+        // 2. If runner was configured at the org level, returns something like: "myorg"
+        /// </summary>
+        public string RepoOrOrgName
+        {
+            get
+            {
+                Uri accountUri = new Uri(this.ServerUrl);
+                string repoOrOrgName = string.Empty;
+
+                if (accountUri.Host.EndsWith(".githubusercontent.com", StringComparison.OrdinalIgnoreCase))
+                {
+                    Uri gitHubUrl = new Uri(this.GitHubUrl);
+
+                    // Use the "NWO part" from the GitHub URL path
+                    repoOrOrgName = gitHubUrl.AbsolutePath.Trim('/');
+                }
+                else
+                {
+                    repoOrOrgName = accountUri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                }
+
+                return repoOrOrgName;
+            }
+        }
     }
 
     [ServiceLocator(Default = typeof(ConfigurationStore))]
@@ -74,9 +83,6 @@ namespace GitHub.Runner.Common
         void SaveSettings(RunnerSettings settings);
         void DeleteCredential();
         void DeleteSettings();
-        RunnerRuntimeOptions GetRunnerRuntimeOptions();
-        void SaveRunnerRuntimeOptions(RunnerRuntimeOptions options);
-        void DeleteRunnerRuntimeOptions();
     }
 
     public sealed class ConfigurationStore : RunnerService, IConfigurationStore
@@ -85,11 +91,9 @@ namespace GitHub.Runner.Common
         private string _configFilePath;
         private string _credFilePath;
         private string _serviceConfigFilePath;
-        private string _runtimeOptionsFilePath;
 
         private CredentialData _creds;
         private RunnerSettings _settings;
-        private RunnerRuntimeOptions _runtimeOptions;
 
         public override void Initialize(IHostContext hostContext)
         {
@@ -112,16 +116,12 @@ namespace GitHub.Runner.Common
 
             _serviceConfigFilePath = hostContext.GetConfigFile(WellKnownConfigFile.Service);
             Trace.Info("ServiceConfigFilePath: {0}", _serviceConfigFilePath);
-
-            _runtimeOptionsFilePath = hostContext.GetConfigFile(WellKnownConfigFile.Options);
-            Trace.Info("RuntimeOptionsFilePath: {0}", _runtimeOptionsFilePath);
         }
 
         public string RootFolder { get; private set; }
 
         public bool HasCredentials()
         {
-            ArgUtil.Equal(RunMode.Normal, HostContext.RunMode, nameof(HostContext.RunMode));
             Trace.Info("HasCredentials()");
             bool credsStored = (new FileInfo(_credFilePath)).Exists;
             Trace.Info("stored {0}", credsStored);
@@ -131,14 +131,13 @@ namespace GitHub.Runner.Common
         public bool IsConfigured()
         {
             Trace.Info("IsConfigured()");
-            bool configured = HostContext.RunMode == RunMode.Local || (new FileInfo(_configFilePath)).Exists;
+            bool configured = new FileInfo(_configFilePath).Exists;
             Trace.Info("IsConfigured: {0}", configured);
             return configured;
         }
 
         public bool IsServiceConfigured()
         {
-            ArgUtil.Equal(RunMode.Normal, HostContext.RunMode, nameof(HostContext.RunMode));
             Trace.Info("IsServiceConfigured()");
             bool serviceConfigured = (new FileInfo(_serviceConfigFilePath)).Exists;
             Trace.Info($"IsServiceConfigured: {serviceConfigured}");
@@ -147,7 +146,6 @@ namespace GitHub.Runner.Common
 
         public CredentialData GetCredentials()
         {
-            ArgUtil.Equal(RunMode.Normal, HostContext.RunMode, nameof(HostContext.RunMode));
             if (_creds == null)
             {
                 _creds = IOUtil.LoadObject<CredentialData>(_credFilePath);
@@ -177,7 +175,6 @@ namespace GitHub.Runner.Common
 
         public void SaveCredential(CredentialData credential)
         {
-            ArgUtil.Equal(RunMode.Normal, HostContext.RunMode, nameof(HostContext.RunMode));
             Trace.Info("Saving {0} credential @ {1}", credential.Scheme, _credFilePath);
             if (File.Exists(_credFilePath))
             {
@@ -193,7 +190,6 @@ namespace GitHub.Runner.Common
 
         public void SaveSettings(RunnerSettings settings)
         {
-            ArgUtil.Equal(RunMode.Normal, HostContext.RunMode, nameof(HostContext.RunMode));
             Trace.Info("Saving runner settings.");
             if (File.Exists(_configFilePath))
             {
@@ -209,44 +205,12 @@ namespace GitHub.Runner.Common
 
         public void DeleteCredential()
         {
-            ArgUtil.Equal(RunMode.Normal, HostContext.RunMode, nameof(HostContext.RunMode));
             IOUtil.Delete(_credFilePath, default(CancellationToken));
         }
 
         public void DeleteSettings()
         {
-            ArgUtil.Equal(RunMode.Normal, HostContext.RunMode, nameof(HostContext.RunMode));
             IOUtil.Delete(_configFilePath, default(CancellationToken));
-        }
-
-        public RunnerRuntimeOptions GetRunnerRuntimeOptions()
-        {
-            if (_runtimeOptions == null && File.Exists(_runtimeOptionsFilePath))
-            {
-                _runtimeOptions = IOUtil.LoadObject<RunnerRuntimeOptions>(_runtimeOptionsFilePath);
-            }
-
-            return _runtimeOptions;
-        }
-
-        public void SaveRunnerRuntimeOptions(RunnerRuntimeOptions options)
-        {
-            Trace.Info("Saving runtime options.");
-            if (File.Exists(_runtimeOptionsFilePath))
-            {
-                // Delete existing runtime options file first, since the file is hidden and not able to overwrite.
-                Trace.Info("Delete exist runtime options file.");
-                IOUtil.DeleteFile(_runtimeOptionsFilePath);
-            }
-
-            IOUtil.SaveObject(options, _runtimeOptionsFilePath);
-            Trace.Info("Options Saved.");
-            File.SetAttributes(_runtimeOptionsFilePath, File.GetAttributes(_runtimeOptionsFilePath) | FileAttributes.Hidden);
-        }
-
-        public void DeleteRunnerRuntimeOptions()
-        {
-            IOUtil.Delete(_runtimeOptionsFilePath, default(CancellationToken));
         }
     }
 }

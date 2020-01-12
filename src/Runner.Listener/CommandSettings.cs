@@ -28,34 +28,20 @@ namespace GitHub.Runner.Listener
         private readonly string[] validFlags =
         {
             Constants.Runner.CommandLine.Flags.Commit,
-#if OS_WINDOWS
-            Constants.Runner.CommandLine.Flags.GitUseSChannel,
-#endif
             Constants.Runner.CommandLine.Flags.Help,
             Constants.Runner.CommandLine.Flags.Replace,
             Constants.Runner.CommandLine.Flags.RunAsService,
             Constants.Runner.CommandLine.Flags.Once,
-            Constants.Runner.CommandLine.Flags.SslSkipCertValidation,
             Constants.Runner.CommandLine.Flags.Unattended,
             Constants.Runner.CommandLine.Flags.Version
         };
 
         private readonly string[] validArgs =
         {
-            Constants.Runner.CommandLine.Args.Agent,
             Constants.Runner.CommandLine.Args.Auth,
             Constants.Runner.CommandLine.Args.MonitorSocketAddress,
-            Constants.Runner.CommandLine.Args.NotificationPipeName,
-            Constants.Runner.CommandLine.Args.Password,
+            Constants.Runner.CommandLine.Args.Name,
             Constants.Runner.CommandLine.Args.Pool,
-            Constants.Runner.CommandLine.Args.ProxyPassword,
-            Constants.Runner.CommandLine.Args.ProxyUrl,
-            Constants.Runner.CommandLine.Args.ProxyUserName,
-            Constants.Runner.CommandLine.Args.SslCACert,
-            Constants.Runner.CommandLine.Args.SslClientCert,
-            Constants.Runner.CommandLine.Args.SslClientCertKey,
-            Constants.Runner.CommandLine.Args.SslClientCertArchive,
-            Constants.Runner.CommandLine.Args.SslClientCertPassword,
             Constants.Runner.CommandLine.Args.StartupType,
             Constants.Runner.CommandLine.Args.Token,
             Constants.Runner.CommandLine.Args.Url,
@@ -77,9 +63,6 @@ namespace GitHub.Runner.Listener
         public bool Unattended => TestFlag(Constants.Runner.CommandLine.Flags.Unattended);
         public bool Version => TestFlag(Constants.Runner.CommandLine.Flags.Version);
 
-#if OS_WINDOWS
-        public bool GitUseSChannel => TestFlag(Constants.Runner.CommandLine.Flags.GitUseSChannel);
-#endif
         public bool RunOnce => TestFlag(Constants.Runner.CommandLine.Flags.Once);
 
         // Constructor.
@@ -164,25 +147,9 @@ namespace GitHub.Runner.Listener
                 defaultValue: false);
         }
 
-        public bool GetAutoLaunchBrowser()
-        {
-            return TestFlagOrPrompt(
-                name: Constants.Runner.CommandLine.Flags.LaunchBrowser,
-                description: "Would you like to launch your browser for AAD Device Code Flow? (Y/N)",
-                defaultValue: true);
-        }
         //
         // Args.
         //
-        public string GetAgentName()
-        {
-            return GetArgOrPrompt(
-                name: Constants.Runner.CommandLine.Args.Agent,
-                description: "Enter the name of runner:",
-                defaultValue: Environment.MachineName ?? "myagent",
-                validator: Validators.NonEmptyValidator);
-        }
-
         public string GetAuth(string defaultValue)
         {
             return GetArgOrPrompt(
@@ -192,21 +159,12 @@ namespace GitHub.Runner.Listener
                 validator: Validators.AuthSchemeValidator);
         }
 
-        public string GetPassword()
+        public string GetRunnerName()
         {
             return GetArgOrPrompt(
-                name: Constants.Runner.CommandLine.Args.Password,
-                description: "What is your GitHub password?",
-                defaultValue: string.Empty,
-                validator: Validators.NonEmptyValidator);
-        }
-
-        public string GetPool()
-        {
-            return GetArgOrPrompt(
-                name: Constants.Runner.CommandLine.Args.Pool,
-                description: "Enter the name of your runner pool:",
-                defaultValue: "default",
+                name: Constants.Runner.CommandLine.Args.Name,
+                description: "Enter the name of runner:",
+                defaultValue: Environment.MachineName ?? "myrunner",
                 validator: Validators.NonEmptyValidator);
         }
 
@@ -214,7 +172,7 @@ namespace GitHub.Runner.Listener
         {
             return GetArgOrPrompt(
                 name: Constants.Runner.CommandLine.Args.Token,
-                description: "Enter your personal access token:",
+                description: "What is your pool admin oauth access token?",
                 defaultValue: string.Empty,
                 validator: Validators.NonEmptyValidator);
         }
@@ -223,7 +181,16 @@ namespace GitHub.Runner.Listener
         {
             return GetArgOrPrompt(
                 name: Constants.Runner.CommandLine.Args.Token,
-                description: "Enter runner register token:",
+                description: "What is your runner register token?",
+                defaultValue: string.Empty,
+                validator: Validators.NonEmptyValidator);
+        }
+
+        public string GetRunnerDeletionToken()
+        {
+            return GetArgOrPrompt(
+                name: Constants.Runner.CommandLine.Args.Token,
+                description: "Enter runner deletion token:",
                 defaultValue: string.Empty,
                 validator: Validators.NonEmptyValidator);
         }
@@ -242,15 +209,6 @@ namespace GitHub.Runner.Listener
                 description: "What is the URL of your repository?",
                 defaultValue: string.Empty,
                 validator: Validators.ServerUrlValidator);
-        }
-
-        public string GetUserName()
-        {
-            return GetArgOrPrompt(
-                name: Constants.Runner.CommandLine.Args.UserName,
-                description: "What is your GitHub username?",
-                defaultValue: string.Empty,
-                validator: Validators.NonEmptyValidator);
         }
 
         public string GetWindowsLogonAccount(string defaultValue, string descriptionMsg)
@@ -285,65 +243,10 @@ namespace GitHub.Runner.Listener
             return GetArg(Constants.Runner.CommandLine.Args.MonitorSocketAddress);
         }
 
-        public string GetNotificationPipeName()
-        {
-            return GetArg(Constants.Runner.CommandLine.Args.NotificationPipeName);
-        }
-
-        public string GetNotificationSocketAddress()
-        {
-            return GetArg(Constants.Runner.CommandLine.Args.NotificationSocketAddress);
-        }
-
         // This is used to find out the source from where the Runner.Listener.exe was launched at the time of run
         public string GetStartupType()
         {
             return GetArg(Constants.Runner.CommandLine.Args.StartupType);
-        }
-
-        public string GetProxyUrl()
-        {
-            return GetArg(Constants.Runner.CommandLine.Args.ProxyUrl);
-        }
-
-        public string GetProxyUserName()
-        {
-            return GetArg(Constants.Runner.CommandLine.Args.ProxyUserName);
-        }
-
-        public string GetProxyPassword()
-        {
-            return GetArg(Constants.Runner.CommandLine.Args.ProxyPassword);
-        }
-
-        public bool GetSkipCertificateValidation()
-        {
-            return TestFlag(Constants.Runner.CommandLine.Flags.SslSkipCertValidation);
-        }
-
-        public string GetCACertificate()
-        {
-            return GetArg(Constants.Runner.CommandLine.Args.SslCACert);
-        }
-
-        public string GetClientCertificate()
-        {
-            return GetArg(Constants.Runner.CommandLine.Args.SslClientCert);
-        }
-
-        public string GetClientCertificatePrivateKey()
-        {
-            return GetArg(Constants.Runner.CommandLine.Args.SslClientCertKey);
-        }
-
-        public string GetClientCertificateArchrive()
-        {
-            return GetArg(Constants.Runner.CommandLine.Args.SslClientCertArchive);
-        }
-
-        public string GetClientCertificatePassword()
-        {
-            return GetArg(Constants.Runner.CommandLine.Args.SslClientCertPassword);
         }
 
         //

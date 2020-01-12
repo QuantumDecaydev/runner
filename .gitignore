@@ -1,13 +1,18 @@
+# build output
 **/bin
 **/obj
 **/libs
+
+# editors
 **/*.xproj
 **/*.xproj.user
-**/*.sln
 **/.vs
 **/.vscode
 **/*.error
 **/*.json.pretty
+.idea/
+
+# output
 node_modules
 _downloads
 _layout
@@ -20,4 +25,3 @@ TestLogs
 
 #generated
 src/Runner.Sdk/BuildConstants.cs
-

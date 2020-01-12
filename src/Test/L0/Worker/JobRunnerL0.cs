@@ -22,8 +22,6 @@ namespace GitHub.Runner.Common.Tests.Worker
         private CancellationTokenSource _tokenSource;
         private Mock<IJobServer> _jobServer;
         private Mock<IJobServerQueue> _jobServerQueue;
-        private Mock<IRunnerWebProxy> _proxyConfig;
-        private Mock<IRunnerCertificateManager> _cert;
         private Mock<IConfigurationStore> _config;
         private Mock<IExtensionManager> _extensions;
         private Mock<IStepsRunner> _stepRunner;
@@ -43,8 +41,6 @@ namespace GitHub.Runner.Common.Tests.Worker
             _jobExtension = new Mock<IJobExtension>();
             _jobServer = new Mock<IJobServer>();
             _jobServerQueue = new Mock<IJobServerQueue>();
-            _proxyConfig = new Mock<IRunnerWebProxy>();
-            _cert = new Mock<IRunnerCertificateManager>();
             _stepRunner = new Mock<IStepsRunner>();
             _logger = new Mock<IPagingLogger>();
             _temp = new Mock<ITempDirectoryManager>();
@@ -66,22 +62,23 @@ namespace GitHub.Runner.Common.Tests.Worker
 
             TaskOrchestrationPlanReference plan = new TaskOrchestrationPlanReference();
             TimelineReference timeline = new Timeline(Guid.NewGuid());
-            JobEnvironment environment = new JobEnvironment();
-            environment.Variables[Constants.Variables.System.Culture] = "en-US";
-            environment.SystemConnection = new ServiceEndpoint()
+            Guid jobId = Guid.NewGuid();
+            _message = new Pipelines.AgentJobRequestMessage(plan, timeline, jobId, testName, testName, null, null, null, new Dictionary<string, VariableValue>(), new List<MaskHint>(), new Pipelines.JobResources(), new Pipelines.ContextData.DictionaryContextData(), new Pipelines.WorkspaceOptions(), new List<Pipelines.ActionStep>(), null);
+            _message.Variables[Constants.Variables.System.Culture] = "en-US";
+            _message.Resources.Endpoints.Add(new ServiceEndpoint()
             {
                 Name = WellKnownServiceEndpointNames.SystemVssConnection,
-                Url = new Uri("https://test.visualstudio.com"),
+                Url = new Uri("https://pipelines.actions.githubusercontent.com"),
                 Authorization = new EndpointAuthorization()
                 {
                     Scheme = "Test",
-                }
-            };
-            environment.SystemConnection.Authorization.Parameters["AccessToken"] = "token";
+                    Parameters = {
+                        {"AccessToken", "token"}
+                    }
+                },
 
-            List<TaskInstance> tasks = new List<TaskInstance>();
-            Guid JobId = Guid.NewGuid();
-            _message = Pipelines.AgentJobRequestMessageUtil.Convert(new AgentJobRequestMessage(plan, timeline, JobId, testName, testName, environment, tasks));
+            });
+
             _message.Resources.Repositories.Add(new Pipelines.RepositoryResource()
             {
                 Alias = Pipelines.PipelineConstants.SelfAlias,
@@ -95,14 +92,11 @@ namespace GitHub.Runner.Common.Tests.Worker
             _jobExtension.Setup(x => x.InitializeJob(It.IsAny<IExecutionContext>(), It.IsAny<Pipelines.AgentJobRequestMessage>())).
                 Returns(Task.FromResult(_initResult));
 
-            _proxyConfig.Setup(x => x.ProxyAddress)
-                .Returns(string.Empty);
-
             var settings = new RunnerSettings
             {
                 AgentId = 1,
                 AgentName = "agent1",
-                ServerUrl = "https://test.visualstudio.com",
+                ServerUrl = "https://pipelines.actions.githubusercontent.com",
                 WorkFolder = "_work",
             };
 
@@ -114,8 +108,6 @@ namespace GitHub.Runner.Common.Tests.Worker
             hc.SetSingleton(_config.Object);
             hc.SetSingleton(_jobServer.Object);
             hc.SetSingleton(_jobServerQueue.Object);
-            hc.SetSingleton(_proxyConfig.Object);
-            hc.SetSingleton(_cert.Object);
             hc.SetSingleton(_stepRunner.Object);
             hc.SetSingleton(_extensions.Object);
             hc.SetSingleton(_temp.Object);
@@ -160,64 +152,5 @@ namespace GitHub.Runner.Common.Tests.Worker
                 _stepRunner.Verify(x => x.RunAsync(It.IsAny<IExecutionContext>()), Times.Never);
             }
         }
-
-        // TODO: Move these tests over to JobExtensionL0.cs
-        // [Fact]
-        // [Trait("Level", "L0")]
-        // [Trait("Category", "Worker")]
-        // public async Task UploadDiganosticLogIfEnvironmentVariableSet()
-        // {
-        //     using (TestHostContext hc = CreateTestContext())
-        //     {
-        //         _message.Variables[Constants.Variables.Actions.RunnerDebug] = "true";
-
-        //         await _jobRunner.RunAsync(_message, _tokenSource.Token);
-
-        //         _diagnosticLogManager.Verify(x =>
-        //             x.UploadDiagnosticLogsAsync(
-        //                 It.IsAny<IExecutionContext>(),
-        //                 It.IsAny<Pipelines.AgentJobRequestMessage>(),
-        //                 It.IsAny<DateTime>()),
-        //             Times.Once);
-        //     }
-        // }
-
-        // [Fact]
-        // [Trait("Level", "L0")]
-        // [Trait("Category", "Worker")]
-        // public async Task DontUploadDiagnosticLogIfEnvironmentVariableFalse()
-        // {
-        //     using (TestHostContext hc = CreateTestContext())
-        //     {
-        //         _message.Variables[Constants.Variables.Actions.RunnerDebug] = "false";
-
-        //         await _jobRunner.RunAsync(_message, _tokenSource.Token);
-
-        //         _diagnosticLogManager.Verify(x =>
-        //             x.UploadDiagnosticLogsAsync(
-        //                 It.IsAny<IExecutionContext>(),
-        //                 It.IsAny<Pipelines.AgentJobRequestMessage>(),
-        //                 It.IsAny<DateTime>()),
-        //             Times.Never);
-        //     }
-        // }
-
-        // [Fact]
-        // [Trait("Level", "L0")]
-        // [Trait("Category", "Worker")]
-        // public async Task DontUploadDiagnosticLogIfEnvironmentVariableMissing()
-        // {
-        //     using (TestHostContext hc = CreateTestContext())
-        //     {
-        //         await _jobRunner.RunAsync(_message, _tokenSource.Token);
-
-        //         _diagnosticLogManager.Verify(x =>
-        //             x.UploadDiagnosticLogsAsync(
-        //                 It.IsAny<IExecutionContext>(),
-        //                 It.IsAny<Pipelines.AgentJobRequestMessage>(),
-        //                 It.IsAny<DateTime>()),
-        //             Times.Never);
-        //     }
-        // }
     }
 }
